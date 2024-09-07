@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 type RequestContext struct {
@@ -67,6 +68,8 @@ func (r RequestContext) DecodeForm(key string, v interface{}) error {
 		err = v.LoadString(value)
 	case *string:
 		*v = value
+	case *[]string:
+		*v = strings.Split(value, ",")
 	case *int:
 		*v, err = strconv.Atoi(value)
 	case *int64:
