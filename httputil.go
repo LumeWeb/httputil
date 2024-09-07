@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type RequestContext struct {
@@ -78,6 +79,11 @@ func (r RequestContext) DecodeForm(key string, v interface{}) error {
 		*v, err = strconv.ParseUint(value, 10, 64)
 	case *bool:
 		*v, err = strconv.ParseBool(value)
+	case **time.Time:
+		parsedTime, err := time.Parse(time.RFC3339, value)
+		if err == nil {
+			*v = &parsedTime
+		}
 	default:
 		panic(fmt.Sprintf("unsupported type %T", v))
 	}
