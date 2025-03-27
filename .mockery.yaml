@@ -1,0 +1,29 @@
+with-expecter: true
+disable-version-string: true
+issue-845-fix: true
+resolve-type-alias: false
+packages:
+  go.lumeweb.com/httputil:
+    dir: internal/mocks
+    all: true
+    mock-build-tags: "test"
+    with-expecter: true
+    interfaces:
+        DTORequest:
+            with-expecter: true
+            config:
+              dir: internal/mocks
+              outpkg: mocks
+              filename: DTORequest.go
+        DTOResponse:
+            with-expecter: true
+            config:
+              dir: internal/mocks
+              outpkg: mocks
+              filename: DTOResponse.go
+        DTOValidator:
+            with-expecter: true
+            config:
+              dir: internal/mocks
+              outpkg: mocks
+              filename: DTOValidator.go
