@@ -34,7 +34,7 @@ func (r RequestContext) Encode(v any) {
 
 // Decode reads and parses the request body as JSON into the provided value.
 // Returns an error wrapped with type information if decoding fails
-func (r RequestContext) Decode(v any) error {
+func (r *RequestContext) Decode(v any) error {
 	// Read and restore body when GetBody isn't available
 	bodyContent, err := io.ReadAll(r.Request.Body)
 	if err != nil {
