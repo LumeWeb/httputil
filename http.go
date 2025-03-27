@@ -41,9 +41,14 @@ func (r RequestContext) Decode(v any) error {
 		return fmt.Errorf("error reading request body: %w", err)
 	}
 	// Restore original body from the read content
-	r.Request.Body = io.NopCloser(bytes.NewReader(bodyContent))
+	reader := bytes.NewReader(bodyContent)
+	r.Request.Body = io.NopCloser(reader)
 	if err := json.NewDecoder(r.Request.Body).Decode(v); err != nil {
 		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
+	}
+	_, err = reader.Seek(0, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("error seeking to beginning of request body: %w", err)
 	}
 	return nil
 }
