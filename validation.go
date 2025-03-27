@@ -7,6 +7,8 @@ import (
 	"fmt"
 	z "github.com/Oudwins/zog"
 	"github.com/Oudwins/zog/parsers/zjson"
+	"io"
+	"strings"
 )
 
 // DTOValidator interface
@@ -17,25 +19,70 @@ type DTOValidator interface {
 	Schema() *z.StructSchema
 }
 
+// ValidationError represents structured validation errors
+type ValidationError struct {
+	FieldErrors map[string]string // Field path -> error message
+	joinedError error             // Pre-joined error for logging
+}
+
+func (v *ValidationError) Error() string {
+	if v.joinedError != nil {
+		return v.joinedError.Error()
+	}
+	// Fallback to field errors if no joined error
+	var msgs []string
+	for _, msg := range v.FieldErrors {
+		msgs = append(msgs, msg)
+	}
+	return strings.Join(msgs, ", ")
+}
+
+func (v *ValidationError) Unwrap() []error {
+	errs := make([]error, 0, len(v.FieldErrors))
+	for _, msg := range v.FieldErrors {
+		errs = append(errs, errors.New(msg))
+	}
+	return errs
+}
+
+// Fields returns the field-specific error messages
+func (v *ValidationError) Fields() map[string]string {
+	return v.FieldErrors
+}
+
+// IsValidationError checks if an error is or contains a ValidationError
+func IsValidationError(err error) bool {
+	var verr *ValidationError
+	return errors.As(err, &verr)
+}
+
 // Validate method
 // Validate applies schema validation to the request body using the DTOValidator's schema.
-// Handles request body reading and parsing, returning validation errors formatted
-// as a multi-error containing all validation issues found.
+// Returns a ValidationError containing structured error information when validation fails.
 func (r RequestContext) Validate(validator DTOValidator) error {
 	schema := validator.Schema()
 
 	if schema == nil {
-		return fmt.Errorf("schema is nil: invalid schema")
+		return &ValidationError{
+			FieldErrors: map[string]string{
+				"": "schema is nil: invalid schema",
+			},
+			joinedError: errors.New("schema is nil: invalid schema"),
+		}
 	}
 
 	// Get a fresh copy of the request body
 	var body bytes.Buffer
 	if r.Request.GetBody == nil {
-		// If GetBody wasn't set, read directly from Body
-		_, err := body.ReadFrom(r.Request.Body)
+		// Read and restore body when GetBody isn't available
+		bodyContent, err := io.ReadAll(r.Request.Body)
 		if err != nil {
 			return fmt.Errorf("error reading request body: %w", err)
 		}
+		// Restore original body from the read content
+		r.Request.Body = io.NopCloser(bytes.NewReader(bodyContent))
+		// Copy into validation buffer
+		body.Write(bodyContent)
 	} else {
 		// Use GetBody to get a fresh copy
 		bodyCopy, err := r.Request.GetBody()
@@ -53,14 +100,22 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 	if len(issues) > 0 {
 		// Use Zog's built-in sanitizer to convert issues to a simple map
 		sanitized := z.Issues.SanitizeMap(issues)
-		
-		var valErrors error
+
+		fieldErrors := make(map[string]string, len(sanitized))
+		var errs []error
+
 		for path, messages := range sanitized {
 			if len(messages) > 0 {
-				valErrors = errors.Join(errors.New(path+": "+messages[0]), valErrors)
+				msg := fmt.Sprintf("%s: %s", path, messages[0])
+				fieldErrors[path] = msg
+				errs = append(errs, errors.New(msg))
 			}
 		}
-		return valErrors
+
+		return &ValidationError{
+			FieldErrors: fieldErrors,
+			joinedError: errors.New("validation failed"),
+		}
 	}
 	return nil
 }
@@ -74,7 +129,12 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string, error) {
 	schema := entity.Schema()
 	if schema == nil {
-		return nil, fmt.Errorf("schema is nil: invalid schema")
+		return nil, &ValidationError{
+			FieldErrors: map[string]string{
+				"": "schema is nil: invalid schema",
+			},
+			joinedError: errors.New("schema is nil: invalid schema"),
+		}
 	}
 	// Parse the request body using zog
 	errs := schema.Parse(zjson.Decode(r.Request.Body), entity)

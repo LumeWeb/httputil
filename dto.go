@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -8,54 +9,46 @@ import (
 // DTORequest defines the interface for Data Transfer Objects (DTOs) that convert
 // incoming requests to domain models. Implementations should handle validation
 // and conversion logic.
-type DTORequest interface {
-	ToModel(model any) error // Maps DTO to an existing model
+type DTORequest[M any] interface {
+	ToModel() (M, error) // Returns a new model of type M
 }
 
 // DTOResponse defines the interface for DTOs that convert domain models to
 // API responses. Implementations should handle serialization and formatting.
-type DTOResponse interface {
-	FromModel(model any) error // Maps from a model to the DTO
+type DTOResponse[M any] interface {
+	FromModel(model M) error // Takes a model of type M
 }
 
-// DecodeAndValidateRequest function
-// DecodeAndValidateRequest handles the complete request processing pipeline:
-// 1. Decodes request body into DTO
-// 2. Validates DTO if it implements DTOValidator
-// 3. Maps DTO to domain model if DTO implements DTORequest
-// Returns error at first failure in the pipeline
-func (r RequestContext) DecodeAndValidateRequest(dto any, model any) error {
+// DecodeAndValidateRequest handles the complete request processing pipeline.
+// It uses generics to ensure type safety when decoding and validating
+func DecodeAndValidateRequest[M any, D DTORequest[M]](r RequestContext, dto D) (M, error) {
+	var zero M
+
 	if err := r.Decode(dto); err != nil {
-		return err
+		return zero, err
 	}
 
 	// Check if the DTO implements DTOValidator and, if so, validate it.
-	if validator, ok := dto.(DTOValidator); ok {
-		if err := r.Validate(validator); err != nil {
-			return err // Validation errors handled by r.Validate
+	if validator, ok := any(dto).(DTOValidator); ok {
+		if verr := r.Validate(validator); verr != nil {
+			// Handle validation errors with structured response
+			var vErr *ValidationError
+			if errors.As(verr, &vErr) {
+				return zero, r.Error(vErr, http.StatusUnprocessableEntity)
+			}
+			return zero, verr
 		}
 	}
 
-	// Check if the DTO implements DTORequest and, if so, convert to model.
-	if request, ok := dto.(DTORequest); ok {
-		if err := request.ToModel(model); err != nil {
-			return r.Check("failed to map DTO to model", err)
-		}
-	}
-
-	return nil
+	return dto.ToModel()
 }
 
-// EncodeResponse function
-// EncodeResponse handles the response generation pipeline:
-// 1. Maps domain model to DTO using DTOResponse implementation
-// 2. Encodes DTO to JSON response
-// Sends 500 error if mapping fails
-func (r RequestContext) EncodeResponse(model any, dto DTOResponse) {
+// EncodeResponse handles the response generation pipeline.
+// It uses generics to ensure type safety when encoding the response.
+func EncodeResponse[M any, D DTOResponse[M]](r RequestContext, model M, dto D) error {
 	if err := dto.FromModel(model); err != nil {
-		_ = r.Error(fmt.Errorf("failed to map model to DTO: %w", err), http.StatusInternalServerError)
-		return
+		return r.Error(fmt.Errorf("failed to map model to DTO: %w", err), http.StatusInternalServerError)
 	}
-	// Encode the model directly since we already mapped it to the DTO
-	r.Encode(model)
+	r.Encode(dto)
+	return nil
 }
