@@ -1,8 +1,10 @@
 package httputil
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -33,6 +35,13 @@ func (r RequestContext) Encode(v any) {
 // Decode reads and parses the request body as JSON into the provided value.
 // Returns an error wrapped with type information if decoding fails
 func (r RequestContext) Decode(v any) error {
+	// Read and restore body when GetBody isn't available
+	bodyContent, err := io.ReadAll(r.Request.Body)
+	if err != nil {
+		return fmt.Errorf("error reading request body: %w", err)
+	}
+	// Restore original body from the read content
+	r.Request.Body = io.NopCloser(bytes.NewReader(bodyContent))
 	if err := json.NewDecoder(r.Request.Body).Decode(v); err != nil {
 		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
 	}
