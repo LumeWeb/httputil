@@ -5,11 +5,12 @@ import (
 	"net/http"
 )
 
-// RequestContext carries HTTP request-scoped values and provides utility methods.
-// It wraps:
-// - Standard context.Context
-// - HTTP request object
-// - HTTP response writer
+// RequestContext carries HTTP request-scoped values and provides utility methods
+// for handling the complete request/response lifecycle. It combines:
+// - Standard context.Context for cancellation and deadlines
+// - HTTP request object for reading request data
+// - HTTP response writer for sending responses
+// - Validation and encoding utilities
 type RequestContext struct {
 	context.Context
 	Request  *http.Request

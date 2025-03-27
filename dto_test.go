@@ -32,9 +32,9 @@ func TestDecodeAndValidateRequest(t *testing.T) {
 	dto.EXPECT().ToModel().Return(model, nil)
 
 	// Call the function with the new validator that has the schema setup
-	modelResult, err := DecodeAndValidateRequest(r, dto)
-	if err != nil {
-		t.Fatalf("DecodeAndValidateRequest failed: %v", err)
+	modelResult, ok := DecodeAndValidateRequest(r, dto)
+	if !ok {
+		t.Fatal("DecodeAndValidateRequest failed")
 	}
 
 	// Verify that the model was updated correctly
@@ -97,16 +97,23 @@ func TestDecodeAndValidateRequest_DecodeError(t *testing.T) {
 	dto := mocks.NewMockDTORequest[*testDTO](t)
 
 	// Call the function - should fail at decode step
-	_, err := DecodeAndValidateRequest(r, dto)
-
-	if err == nil {
-		t.Fatal("DecodeAndValidateRequest should have returned a decoding error")
+	_, ok := DecodeAndValidateRequest(r, dto)
+	if ok {
+		t.Fatal("DecodeAndValidateRequest should have failed")
 	}
 
-	// Verify we got the JSON unmarshal error
-	expectedErrorMessage := "cannot unmarshal number into Go struct field"
-	if !strings.Contains(err.Error(), expectedErrorMessage) {
-		t.Errorf("Error message mismatch:\ngot: %v\nwant: %v", err.Error(), expectedErrorMessage)
+	// Verify response status and error format
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status code %d, got %d", http.StatusBadRequest, w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if !strings.Contains(resp["error"].(string), "cannot unmarshal number into Go struct field") {
+		t.Errorf("Error message mismatch:\ngot: %v\nwant: %v", resp["error"], "cannot unmarshal number into Go struct field")
 	}
 }
 
@@ -142,22 +149,28 @@ func TestDecodeAndValidateRequest_ValidationError(t *testing.T) {
 	dto.MockDTOValidator.EXPECT().Schema().Return(schema)
 
 	// Call the function
-	_, err := DecodeAndValidateRequest(r, dto)
-
-	if err == nil {
-		t.Fatalf("DecodeAndValidateRequest should have returned a validation error")
+	_, ok := DecodeAndValidateRequest(r, dto)
+	if ok {
+		t.Fatal("DecodeAndValidateRequest should have failed")
 	}
 
-	// Check structured error handling
-	var vErr *ValidationError
-	if !errors.As(err, &vErr) {
-		t.Fatalf("Expected ValidationError, got %T", err)
+	// Verify response status and error format
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnprocessableEntity, w.Code)
 	}
 
-	// Check if the error message contains the expected validation error
-	expectedErrorMessage := "validation failed"
-	if !strings.Contains(err.Error(), expectedErrorMessage) {
-		t.Errorf("Error message is incorrect: got %v, want %v", err.Error(), expectedErrorMessage)
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp["error"] != "validation failed" {
+		t.Errorf("Expected error 'validation failed', got %v", resp["error"])
+	}
+
+	fields := resp["fields"].(map[string]interface{})
+	if len(fields) == 0 {
+		t.Error("Expected field errors in response")
 	}
 }
 
@@ -178,16 +191,23 @@ func TestDecodeAndValidateRequest_DTOToModelError(t *testing.T) {
 	dto.EXPECT().ToModel().Return(&struct{ Field string }{}, errors.New("invalid model type"))
 
 	// Call the function
-	_, err := DecodeAndValidateRequest(r, dto)
-
-	if err == nil {
-		t.Fatalf("DecodeAndValidateRequest should have returned an error")
+	_, ok := DecodeAndValidateRequest(r, dto)
+	if ok {
+		t.Fatal("DecodeAndValidateRequest should have failed")
 	}
 
-	// Check if the error message contains the expected error
-	expectedErrorMessage := "invalid model type"
-	if !strings.Contains(err.Error(), expectedErrorMessage) {
-		t.Errorf("Error message should contain: %q, got %q", expectedErrorMessage, err.Error())
+	// Verify response status and error format
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status code %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if !strings.Contains(resp["error"].(string), "invalid model type") {
+		t.Errorf("Error message should contain: %q, got %q", "invalid model type", resp["error"])
 	}
 }
 
@@ -262,9 +282,9 @@ func TestDecodeAndValidateRequest_WithValidator(t *testing.T) {
 	model := &struct{ Field string }{Field: "valid"}
 	dto.MockDTORequest.EXPECT().ToModel().Return(model, nil)
 
-	result, err := DecodeAndValidateRequest(r, dto)
-	if err != nil {
-		t.Fatalf("Unexpected validation error: %v", err)
+	result, ok := DecodeAndValidateRequest(r, dto)
+	if !ok {
+		t.Fatal("Unexpected validation failure")
 	}
 	if result.Field != "valid" {
 		t.Errorf("Expected model field 'valid', got %q", result.Field)
@@ -284,18 +304,26 @@ func TestDecodeAndValidateRequest_WithValidatorError(t *testing.T) {
 	// Create mock validator and DTO
 	dto := &mockDto{}
 
-	_, err := DecodeAndValidateRequest(r, dto)
-	if err == nil {
-		t.Fatal("Expected validation error, got nil")
-	}
-	var vErr *ValidationError
-	if !errors.As(err, &vErr) {
-		t.Fatalf("Expected ValidationError, got %T", err)
+	_, ok := DecodeAndValidateRequest(r, dto)
+	if ok {
+		t.Fatal("Expected validation failure, got success")
 	}
 
+	// Verify response status and error format
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnprocessableEntity, w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	fields := resp["fields"].(map[string]interface{})
+	fieldErr := fields["field"].(string)
 	expectedErr := "string must contain at least 3 character(s)"
-	if !strings.Contains(vErr.Fields()["field"], expectedErr) {
-		t.Errorf("Expected field error to contain %q, got %q", expectedErr, vErr.Fields()["field"])
+	if !strings.Contains(fieldErr, expectedErr) {
+		t.Errorf("Expected field error to contain %q, got %q", expectedErr, fieldErr)
 	}
 }
 
@@ -307,9 +335,9 @@ func TestDecodeAndValidateRequest_WithoutValidator(t *testing.T) {
 	r := Context(req, w)
 
 	dto := &simpleDTO{}
-	model, err := DecodeAndValidateRequest[simpleModel](r, dto)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	model, ok := DecodeAndValidateRequest[simpleModel](r, dto)
+	if !ok {
+		t.Fatal("Unexpected validation failure")
 	}
 	if model.Name != "test" {
 		t.Errorf("Expected model name 'test', got %q", model.Name)

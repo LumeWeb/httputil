@@ -11,15 +11,20 @@ import (
 	"strings"
 )
 
-// DTOValidator interface
 // DTOValidator defines the validation interface for Data Transfer Objects.
-// Implementations should return a validation schema that will be applied
-// to incoming requests.
+// Implementations should return a zog schema that will be applied to validate
+// incoming requests. The schema is used to:
+// - Validate request structure
+// - Provide meaningful error messages
+// - Ensure data integrity before processing
 type DTOValidator interface {
 	Schema() *z.StructSchema
 }
 
-// ValidationError represents structured validation errors
+// ValidationError represents structured validation failures with:
+// - Field-specific error messages
+// - Machine-readable error codes
+// - Nested error support through error wrapping
 type ValidationError struct {
 	FieldErrors map[string]string // Field path -> error message
 	joinedError error             // Pre-joined error for logging
@@ -56,9 +61,11 @@ func IsValidationError(err error) bool {
 	return errors.As(err, &verr)
 }
 
-// Validate method
-// Validate applies schema validation to the request body using the DTOValidator's schema.
-// Returns a ValidationError containing structured error information when validation fails.
+// Validate applies schema validation to the request body using zog schemas.
+// Returns:
+// - nil on successful validation
+// - ValidationError with field-specific errors on failure
+// - Error wrapping original parse failure if schema validation cannot be performed
 func (r RequestContext) Validate(validator DTOValidator) error {
 	schema := validator.Schema()
 
