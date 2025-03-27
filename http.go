@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// Encode writes a JSON response to the client. Handles special cases:
-// - Empty slices are encoded as []
-// - Empty maps are encoded as {}
-// - Sets proper Content-Type header
-// - Uses indented JSON for readability
+// Encode writes a JSON response to the client with consistent formatting:
+// - Empty slices/maps render as []/{} instead of null
+// - Sets application/json Content-Type header
+// - Uses indented JSON for human readability
+// - Handles special types through reflection
 func (r RequestContext) Encode(v any) {
 	r.Response.Header().Set("Content-Type", "application/json")
 	// encode nil slices as [] and nil maps as {} (instead of null)
@@ -31,18 +31,18 @@ func (r RequestContext) Encode(v any) {
 }
 
 // Decode reads and parses the request body as JSON into the provided value.
-// Returns:
-// - error with HTTP status 400 if decoding fails
-// - error is wrapped with type information for better error messages
+// Returns an error wrapped with type information if decoding fails
 func (r RequestContext) Decode(v any) error {
 	if err := json.NewDecoder(r.Request.Body).Decode(v); err != nil {
-		return r.Error(fmt.Errorf("couldn't decode request type (%T): %w", v, err), http.StatusBadRequest)
+		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
 	}
 	return nil
 }
 
-// Error writes an HTTP error response and returns the error. Handles ValidationErrors
-// specially by returning structured JSON responses.
+// Error writes an HTTP error response and returns the error. Formats:
+// - ValidationErrors as 422 Unprocessable Entity with field-specific errors
+// - All other errors as JSON response with "error" field and appropriate status code
+// Maintains consistent JSON formatting for all error responses.
 func (r RequestContext) Error(err error, status int) error {
 	// Handle validation errors with structured response
 	if vErr, ok := err.(*ValidationError); ok {
@@ -55,8 +55,12 @@ func (r RequestContext) Error(err error, status int) error {
 		return err
 	}
 
-	// Default error handling
-	http.Error(r.Response, err.Error(), status)
+	// Default error handling with JSON response
+	r.Response.Header().Set("Content-Type", "application/json")
+	r.Response.WriteHeader(status)
+	json.NewEncoder(r.Response).Encode(map[string]any{
+		"error": err.Error(),
+	})
 	return err
 }
 

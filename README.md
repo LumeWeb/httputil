@@ -6,22 +6,25 @@ A lightweight Go package providing HTTP request/response utilities with:
 - Form data parsing
 - Data validation
 - DTO pattern implementation
-- Consistent error handling
+- Structured error handling with option pattern
+- Customizable error handlers
+- Validation middleware support
 
 ## Features
 
-### Request Context
+### Request Processing Pipeline
 ```go
-r := httputil.Context(req, w) // Create request context
-```
+// Create context and handle request
+r := httputil.Context(req, w)
 
-### JSON Handling
-```go
-// Decode request body
-err := r.Decode(&myStruct)
+// Decode, validate and convert to domain model
+model, ok := httputil.DecodeAndValidateRequest(r, &requestDTO)
+if !ok {
+    return // Error already handled
+}
 
-// Encode response
-r.Encode(responseData)
+// Encode response from domain model
+_ = httputil.EncodeResponse(r, model, &responseDTO)
 ```
 
 ### Form Data Parsing
@@ -40,13 +43,20 @@ err := r.Validate(validator)
 errors, err := r.ValidateRequest(validator)
 ```
 
-### DTO Pattern
+### Option Pattern Configuration
 ```go
-// Request processing pipeline
-err := r.DecodeAndValidateRequest(dto, &model)
+// Custom error handler that logs errors
+errorHandler := func(ctx httputil.RequestContext, err error) {
+    log.Printf("Request error: %v", err)
+    httputil.DefaultErrorHandler{}.HandleError(ctx, err)
+}
 
-// Response pipeline  
-r.EncodeResponse(model, dto)
+// Use custom handler for a request
+model, ok := httputil.DecodeAndValidateRequest(
+    r, 
+    &requestDTO,
+    httputil.WithErrorHandler(errorHandler),
+)
 ```
 
 ## Installation
@@ -54,92 +64,102 @@ r.EncodeResponse(model, dto)
 go get go.lumeweb.com/httputil
 ```
 
-## Examples
+## Error Handling
 
-### Basic Handler
+The package provides three levels of error handling:
+
+1. **Automatic Errors** (400/422/500 status codes):
 ```go
-func handler(w http.ResponseWriter, req *http.Request) {
-    r := httputil.Context(req, w)
-    
-    var input InputDTO
-    if err := r.DecodeAndValidateRequest(&input, &model); err != nil {
-        return // Error already handled
-    }
-    
-    // Process model...
-    
-    r.EncodeResponse(model, &OutputDTO{})
-}
+// Errors automatically handled with appropriate status codes
+model, ok := httputil.DecodeAndValidateRequest(r, &dto)
 ```
 
-### Complete Example with Structs
-
-#### Request DTO Example
+2. **Custom Error Handler**:
 ```go
-type CreateUserRequest struct {
-    Username string `json:"username"`
-    Email    string `json:"email"`
-    Age      int    `json:"age"`
+// Create custom error handler
+type LoggingHandler struct{}
+
+func (h LoggingHandler) HandleError(ctx httputil.RequestContext, err error) {
+    log.Printf("Error processing request: %v", err)
+    httputil.DefaultErrorHandler{}.HandleError(ctx, err)
 }
 
-func (r *CreateUserRequest) ToModel(model any) error {
-    user, ok := model.(*User) // Assume User is your domain model
-    if !ok {
-        return fmt.Errorf("expected *User, got %T", model)
-    }
-    user.Username = r.Username
-    user.Email = r.Email
-    user.Age = r.Age
-    return nil
-}
-
-func (r *CreateUserRequest) Schema() *z.StructSchema {
-    return z.Struct(z.Schema{
-        "username": z.String().Min(3).Max(50),
-        "email":    z.String().Email(),
-        "age":      z.Number().Min(18).Max(120),
-    })
-}
+// Use custom handler
+model, ok := httputil.DecodeAndValidateRequest(
+    r,
+    &dto,
+    httputil.WithErrorHandler(LoggingHandler{}),
+)
 ```
 
-#### Response DTO Example
+3. **Manual Error Handling**:
 ```go
-type UserResponse struct {
-    ID       string `json:"id"`
-    Username string `json:"username"`
-    Email    string `json:"email"`
+// Full manual control
+cfg := httputil.vdConfig{
+    errorHandler: httputil.ErrorHandlerFunc(func(ctx httputil.RequestContext, err error) {
+        // Custom error handling logic
+    }),
 }
 
-func (r *UserResponse) FromModel(model any) error {
-    user, ok := model.(*User)
-    if !ok {
-        return fmt.Errorf("expected *User, got %T", model)
-    }
-    r.ID = user.ID
-    r.Username = user.Username
-    r.Email = user.Email
-    return nil
-}
+model, ok := httputil.DecodeAndValidateRequest(r, &dto, httputil.WithErrorHandler(cfg.errorHandler))
 ```
 
-#### Full Handler Example
+### Complete Example
+
+#### Request/Response Flow
 ```go
 func createUserHandler(w http.ResponseWriter, req *http.Request) {
+    // Initialize context
     r := httputil.Context(req, w)
     
-    var input CreateUserRequest
-    var user User
+    // Decode and validate request
+    var createReq CreateUserRequest
+    user, ok := httputil.DecodeAndValidateRequest(r, &createReq)
+    if !ok {
+        return // Error response already handled
+    }
     
-    if err := r.DecodeAndValidateRequest(&input, &user); err != nil {
-        // Error already handled with proper HTTP response
+    // Business logic
+    if err := userService.Create(user); err != nil {
+        _ = r.Error(fmt.Errorf("creation failed: %w", err), http.StatusConflict)
         return
     }
     
-    // Save user to database...
-    user.ID = generateID()
+    // Create and send response
+    resp := UserResponse{}
+    _ = httputil.EncodeResponse(r, user, &resp)
+}
+```
+
+#### Custom Error Handling
+```go
+type MetricsErrorHandler struct {
+    metricsClient metrics.Client
+}
+
+func (h MetricsErrorHandler) HandleError(ctx httputil.RequestContext, err error) {
+    // Track error metrics
+    h.metricsClient.Increment("request.errors", 1)
     
-    // Return response
-    r.EncodeResponse(&user, &UserResponse{})
+    // Fallback to default handling
+    httputil.DefaultErrorHandler{}.HandleError(ctx, err)
+}
+
+// Usage
+func metricsMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        ctx := httputil.Context(r, w)
+        handler := MetricsErrorHandler{metricsClient: globalMetrics}
+        
+        // Process request with metrics tracking
+        var createReq CreateUserRequest
+        user, ok := httputil.DecodeAndValidateRequest(
+            ctx, 
+            &createReq,
+            httputil.WithErrorHandler(handler),
+        )
+        // ... rest of handler logic
+    })
 }
 ```
 

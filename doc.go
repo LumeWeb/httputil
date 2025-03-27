@@ -1,10 +1,17 @@
-// Package httputil provides HTTP utility functions and middleware for building web applications.
-// It includes features for request/response handling, data validation, DTO mapping, and error handling.
+// Package httputil provides HTTP utility functions for building robust web APIs in Go.
+// It implements patterns for type-safe request/response handling with validation and structured error reporting.
 //
-// The package focuses on:
-// - Streamlined request context management
-// - JSON encoding/decoding with proper error handling
-// - Data validation using struct schemas
-// - DTO pattern implementation
-// - Consistent error responses
+// Key features:
+// - DTO (Data Transfer Object) pattern for request/response marshaling
+// - Declarative validation using struct schemas
+// - Option pattern configuration for request processing
+// - Automatic error classification and JSON error responses
+// - Context-aware request handling
+//
+// The package emphasizes:
+// - Type safety through generics
+// - Clear separation of concerns
+// - Customizable error handling
+// - Consistent JSON formatting
+// - Middleware-ready components
 package httputil
