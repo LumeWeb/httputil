@@ -1,7 +1,6 @@
 package httputil
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,21 +10,12 @@ import (
 	"time"
 )
 
-type RequestContext struct {
-	context.Context
-	Request  *http.Request
-	Response http.ResponseWriter
-}
-
-func Context(r *http.Request, w http.ResponseWriter) RequestContext {
-	return RequestContext{
-		Context:  r.Context(),
-		Request:  r,
-		Response: w,
-	}
-}
-
-func (r RequestContext) Encode(v interface{}) {
+// Encode writes a JSON response to the client. Handles special cases:
+// - Empty slices are encoded as []
+// - Empty maps are encoded as {}
+// - Sets proper Content-Type header
+// - Uses indented JSON for readability
+func (r RequestContext) Encode(v any) {
 	r.Response.Header().Set("Content-Type", "application/json")
 	// encode nil slices as [] and nil maps as {} (instead of null)
 	if val := reflect.ValueOf(v); val.Kind() == reflect.Slice && val.Len() == 0 {
@@ -40,24 +30,51 @@ func (r RequestContext) Encode(v interface{}) {
 	_ = enc.Encode(v)
 }
 
-func (r RequestContext) Decode(v interface{}) error {
+// Decode reads and parses the request body as JSON into the provided value.
+// Returns:
+// - error with HTTP status 400 if decoding fails
+// - error is wrapped with type information for better error messages
+func (r RequestContext) Decode(v any) error {
 	if err := json.NewDecoder(r.Request.Body).Decode(v); err != nil {
 		return r.Error(fmt.Errorf("couldn't decode request type (%T): %w", v, err), http.StatusBadRequest)
 	}
 	return nil
 }
+
+// Error writes an HTTP error response and returns the error.
+// This ensures errors are properly communicated to both the client (via HTTP response)
+// and the caller (via returned error).
 func (r RequestContext) Error(err error, status int) error {
 	http.Error(r.Response, err.Error(), status)
 	return err
 }
+
+// Check simplifies error handling by:
+// - Returning nil if err is nil
+// - Wrapping the error with a message
+// - Sending an HTTP 500 response if error exists
+// Use this for checking operational errors that should result in server errors
 func (r RequestContext) Check(msg string, err error) error {
 	if err != nil {
 		return r.Error(fmt.Errorf("%v: %w", msg, err), http.StatusInternalServerError)
 	}
 	return nil
 }
-func (r RequestContext) DecodeForm(key string, v interface{}) error {
-	value := r.Request.FormValue(key)
+
+// DecodeForm parses and converts form values to various types. Supports:
+// - Standard types (string, int, bool, time.Time)
+// - Slice types from comma-separated values
+// - Custom types implementing UnmarshalText or LoadString interfaces
+// Panics if passed an unsupported type
+func (r RequestContext) DecodeForm(key string, v any) error {
+	// Ensure form is parsed first
+	if r.Request.PostForm == nil {
+		err := r.Request.ParseForm()
+		if err != nil {
+			return err
+		}
+	}
+	value := r.Request.PostFormValue(key)
 	if value == "" {
 		return nil
 	}
