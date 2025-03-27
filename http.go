@@ -41,10 +41,21 @@ func (r RequestContext) Decode(v any) error {
 	return nil
 }
 
-// Error writes an HTTP error response and returns the error.
-// This ensures errors are properly communicated to both the client (via HTTP response)
-// and the caller (via returned error).
+// Error writes an HTTP error response and returns the error. Handles ValidationErrors
+// specially by returning structured JSON responses.
 func (r RequestContext) Error(err error, status int) error {
+	// Handle validation errors with structured response
+	if vErr, ok := err.(*ValidationError); ok {
+		r.Response.Header().Set("Content-Type", "application/json")
+		r.Response.WriteHeader(status)
+		json.NewEncoder(r.Response).Encode(map[string]any{
+			"error":  "validation failed",
+			"fields": vErr.Fields(),
+		})
+		return err
+	}
+
+	// Default error handling
 	http.Error(r.Response, err.Error(), status)
 	return err
 }

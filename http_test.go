@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +93,7 @@ func TestDecode(t *testing.T) {
 
 			if tc.expectedErr != nil {
 				if err == nil || !strings.Contains(err.Error(), tc.expectedErr.Error()) {
-					t.Errorf("expected error %q, got %q", tc.expectedErr, err)
+					t.Errorf("expected error to contain %q, got %q", tc.expectedErr.Error(), err)
 				}
 			} else if err != nil {
 				t.Errorf("unexpected error: %v", err)
@@ -102,21 +103,59 @@ func TestDecode(t *testing.T) {
 }
 
 func TestError(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
-	r := Context(req, w)
+	t.Run("standard error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		r := Context(req, w)
 
-	err := r.Error(errors.New("test error"), http.StatusBadRequest)
+		err := r.Error(errors.New("test error"), http.StatusBadRequest)
 
-	if err == nil || err.Error() != "test error" {
-		t.Errorf("expected error %q, got %q", "test error", err)
-	}
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status code %d, got %d", http.StatusBadRequest, w.Code)
-	}
-	if w.Body.String() != "test error\n" {
-		t.Errorf("expected body %q, got %q", "test error\n", w.Body.String())
-	}
+		if err == nil || err.Error() != "test error" {
+			t.Errorf("expected error %q, got %q", "test error", err)
+		}
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status code %d, got %d", http.StatusBadRequest, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "test error") {
+			t.Errorf("expected body to contain %q, got %q", "test error", w.Body.String())
+		}
+	})
+
+	t.Run("validation error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		r := Context(req, w)
+
+		verr := &ValidationError{
+			FieldErrors: map[string]string{
+				"field1": "error1",
+				"field2": "error2",
+			},
+			joinedError: errors.New("validation failed"),
+		}
+		err := r.Error(verr, http.StatusUnprocessableEntity)
+
+		if err == nil || err.Error() != verr.Error() {
+			t.Errorf("expected error %q, got %q", verr.Error(), err)
+		}
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected status code %d, got %d", http.StatusUnprocessableEntity, w.Code)
+		}
+
+		var response map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if response["error"] != "validation failed" {
+			t.Errorf("expected error key 'validation failed', got %q", response["error"])
+		}
+
+		fields := response["fields"].(map[string]interface{})
+		if len(fields) != 2 || fields["field1"] != "error1" || fields["field2"] != "error2" {
+			t.Errorf("unexpected fields content: %v", fields)
+		}
+	})
 }
 
 func TestCheck(t *testing.T) {

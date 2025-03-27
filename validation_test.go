@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"bytes"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestValidate_ValidRequest(t *testing.T) {
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3),
+		"field": z.String().Min(3).Required(),
 	})
 
 	validator.EXPECT().Schema().Return(schema)
@@ -41,7 +42,7 @@ func TestValidate_InvalidRequest(t *testing.T) {
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3),
+		"field": z.String().Min(3).Required(),
 	})
 
 	validator.EXPECT().Schema().Return(schema)
@@ -51,14 +52,22 @@ func TestValidate_InvalidRequest(t *testing.T) {
 		t.Fatal("Validate should have returned error for invalid request")
 	}
 
-	expected := "field must be at least 3 characters"
-	if strings.Contains(err.Error(), expected) {
-		t.Errorf("Expected error %q, got %q", expected, err.Error())
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("Expected ValidationError, got %T", err)
+	}
+
+	expected := "string must contain at least 3 character(s)"
+	if !strings.Contains(vErr.Fields()["field"], expected) {
+		t.Errorf("Expected error to contain %q, got %q", expected, vErr.Fields()["field"])
 	}
 }
 
 func TestValidate_NilSchema(t *testing.T) {
-	req := httptest.NewRequest("GET", "/test", nil)
+	// Create a request with empty field value
+	body := []byte(`{"field": ""}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r := Context(req, w)
 
@@ -71,8 +80,8 @@ func TestValidate_NilSchema(t *testing.T) {
 	}
 
 	expected := "schema is nil: invalid schema"
-	if err.Error() != expected {
-		t.Errorf("Expected error %q, got %q", expected, err.Error())
+	if !strings.Contains(err.Error(), expected) {
+		t.Errorf("Expected error to contain %q, got %q", expected, err.Error())
 	}
 }
 
@@ -85,7 +94,7 @@ func TestValidateRequest_Valid(t *testing.T) {
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3),
+		"field": z.String().Min(3).Required(), // Lowercase to match JSON field name
 	})
 
 	validator.EXPECT().Schema().Return(schema)
@@ -121,9 +130,9 @@ func TestValidateRequest_Invalid(t *testing.T) {
 		t.Fatal("Expected validation errors, got nil")
 	}
 
-	expected := "field must be at least 3 characters"
-	if strings.Contains(validationErrors["field"], expected) {
-		t.Errorf("Expected error %q, got %q", expected, validationErrors["field"])
+	expected := "string must contain at least 3 character(s)"
+	if !strings.Contains(validationErrors["field"], expected) {
+		t.Errorf("Expected error to contain %q, got %q", expected, validationErrors["field"])
 	}
 }
 
@@ -183,9 +192,14 @@ func TestValidateRequest_NilSchema(t *testing.T) {
 	}
 
 	// Verify that the error message is correct
-	expectedErrorMessage := "schema is nil: invalid schema"
-	if err != nil && err.Error() != expectedErrorMessage {
-		t.Errorf("Error message is incorrect: got %v, want %v", err.Error(), expectedErrorMessage)
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("Expected ValidationError, got %T", err)
+	}
+
+	expected := "schema is nil: invalid schema"
+	if !strings.Contains(vErr.Fields()[""], expected) {
+		t.Errorf("Error message should contain %q, got %q", expected, vErr.Fields()[""])
 	}
 
 	// Verify that the validationErrors is nil
@@ -195,31 +209,107 @@ func TestValidateRequest_NilSchema(t *testing.T) {
 }
 
 func TestValidate_EmptyField(t *testing.T) {
-	// Create a mock request and response writer
-	req := httptest.NewRequest("GET", "/test", nil)
+	// Create a request with empty field value
+	body := []byte(`{"field": "a"}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-
-	// Create a RequestContext
 	r := Context(req, w)
 
-	// Create an instance of the DTOValidator
+	// Create and setup validator mock
 	validator := mocks.NewMockDTOValidator(t)
-
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3), // Match JSON field name
+		"field": z.String().Min(3).Required(),
 	})
-	// Set up expectations
 	validator.EXPECT().Schema().Return(schema)
 
 	// Call the Validate function
 	err := r.Validate(validator)
-
 	if err == nil {
-		t.Errorf("Validate should have returned an error for invalid data")
+		t.Fatal("Expected validation error")
 	}
 
-	expectedErrorMessage := "field must be at least 3 characters"
-	if err != nil && strings.Contains(err.Error(), expectedErrorMessage) {
-		t.Errorf("Error message is incorrect: got %v, want %v", err.Error(), expectedErrorMessage)
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("Expected ValidationError, got %T", err)
+	}
+
+	expected := "string must contain at least 3 character(s)"
+	if !strings.Contains(vErr.Fields()["field"], expected) {
+		t.Errorf("Error message should contain %q, got %q", expected, vErr.Fields()["field"])
+	}
+}
+
+func TestValidationError_Unwrap(t *testing.T) {
+	errs := []error{
+		errors.New("error1"),
+		errors.New("error2"),
+	}
+	vErr := &ValidationError{
+		FieldErrors: map[string]string{
+			"field1": "error1",
+			"field2": "error2",
+		},
+		joinedError: errors.Join(errs...),
+	}
+
+	unwrapped := vErr.Unwrap()
+	if len(unwrapped) != 2 {
+		t.Fatalf("Expected 2 unwrapped errors, got %d", len(unwrapped))
+	}
+	// Check contains both errors regardless of order
+	found1 := false
+	found2 := false
+	for _, err := range unwrapped {
+		if err.Error() == "error1" {
+			found1 = true
+		}
+		if err.Error() == "error2" {
+			found2 = true
+		}
+	}
+	if !found1 || !found2 {
+		t.Errorf("Unwrapped errors mismatch: got %v", unwrapped)
+	}
+}
+
+func TestValidationError_MultipleFields(t *testing.T) {
+	body := []byte(`{"field1": "a", "field2": ""}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r := Context(req, w)
+
+	validator := mocks.NewMockDTOValidator(t)
+	schema := z.Struct(z.Schema{
+		"field1": z.String().Min(3), // Match struct field name case
+		"field2": z.String().Required(),
+	})
+	validator.EXPECT().Schema().Return(schema)
+
+	err := r.Validate(validator)
+	if err == nil {
+		t.Fatal("Expected validation error")
+	}
+
+	vErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("Expected ValidationError, got %T", err)
+	}
+
+	expectedErrors := map[string]string{
+		"field1": "string must contain at least 3 character(s)",
+		"field2": "field2: is required",
+	}
+
+	for field, expected := range expectedErrors {
+		actual, exists := vErr.Fields()[field]
+		if !exists {
+			t.Errorf("Missing expected error for field %q", field)
+			continue
+		}
+		if !strings.Contains(actual, expected) {
+			t.Errorf("Field %q error mismatch: got %q, want %q", field, actual, expected)
+		}
 	}
 }
