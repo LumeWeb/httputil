@@ -126,9 +126,21 @@ func DecodeAndValidateRequest[M any, D DTORequest[M]](
 
 // EncodeResponse handles the response generation pipeline.
 // It uses generics to ensure type safety when encoding the response.
-func EncodeResponse[M any, D DTOResponse[M]](r RequestContext, model M, dto D) error {
+func EncodeResponse[M any, D DTOResponse[M]](r RequestContext, model M, dto D, opts ...VDOption) error {
+	// Configure defaults
+	cfg := &vdConfig{
+		errorHandler: &DefaultErrorHandler{},
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	if err := dto.FromModel(model); err != nil {
-		return r.Error(fmt.Errorf("failed to map model to DTO: %w", err), http.StatusInternalServerError)
+		err = fmt.Errorf("failed to map model to DTO: %w", err)
+		cfg.errorHandler.HandleError(r, err)
+		return err
 	}
 	r.Encode(dto)
 	return nil
