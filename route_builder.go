@@ -1,10 +1,7 @@
 package httputil
 
 import (
-	"github.com/gorilla/mux"
 	swagger "go.lumeweb.com/gswagger"
-	"go.lumeweb.com/portal-middleware/auth/jwt"
-	"go.lumeweb.com/portal-middleware/middleware"
 	"go.lumeweb.com/portal/core"
 	"net/http"
 )
@@ -39,24 +36,5 @@ func WithAccess(accessRole string) RouteOption {
 func WithSwagger(def swagger.Definitions) RouteOption {
 	return func(d *RouteDefinition) {
 		d.Swagger = def
-	}
-}
-
-func WithVerification(ctx core.Context) RouteOption {
-	return func(d *RouteDefinition) {
-		d.Middlewares = append(d.Middlewares, middleware.AccountVerifiedMiddleware(ctx))
-	}
-}
-
-func With2FA(ctx core.Context) RouteOption {
-	return func(d *RouteDefinition) {
-		d.Middlewares = append(d.Middlewares, middleware.AuthMiddleware(ctx, jwt.Purpose2FA))
-	}
-}
-
-// Middleware option
-func WithMiddleware(mw ...mux.MiddlewareFunc) RouteOption {
-	return func(d *RouteDefinition) {
-		d.Middlewares = append(d.Middlewares, mw...)
 	}
 }
