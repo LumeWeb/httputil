@@ -77,13 +77,15 @@ type RouteDefinition struct {
 // It also registers access control for the route.
 func RegisterRoutes(
 	ctx core.Context, // Pass the core context directly
-	muxRouter *mux.Router, // The concrete Mux router
 	gRouter *swagger.Router[gs.HandlerFunc, gs.Route], // gswagger router with gorilla types
 	accessSvc core.AccessService,
 	subdomain string,
 	routes []RouteDefinition,
 	commonMiddleware ...mux.MiddlewareFunc,
 ) error {
+
+	muxRouter := swagger.GetRouter[*mux.Router, gs.HandlerFunc, gs.Route](gRouter.Router())
+
 	for _, route := range routes {
 		// Create the Mux route
 		muxRoute := muxRouter.HandleFunc(route.Path, route.Handler).Methods(route.Method, "OPTIONS") // Include OPTIONS for CORS
