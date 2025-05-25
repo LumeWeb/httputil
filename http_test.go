@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/labstack/echo/v4"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -49,7 +50,8 @@ func TestEncode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/", nil)
 			w := httptest.NewRecorder()
-			r := Context(req, w)
+			e := echo.New()
+			r := Context(e.NewContext(req, w))
 
 			r.Encode(tc.input)
 
@@ -79,15 +81,17 @@ func TestDecode(t *testing.T) {
 			name:        "Invalid JSON",
 			body:        `{"Name": true}`,
 			input:       &struct{ Name string }{},
-			expectedErr: errors.New("couldn't decode request type (*struct { Name string }): json: cannot unmarshal bool into Go struct field .Name of type string"),
+			expectedErr: errors.New("couldn't decode request type (*struct { Name string }): code=400, message=Unmarshal type error: expected=string, got=bool, field=Name, offset=13, internal=json: cannot unmarshal bool into Go struct field .Name of type string"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-			r := Context(req, w)
+			e := echo.New()
+			r := Context(e.NewContext(req, w))
 
 			err := r.Decode(tc.input)
 
@@ -106,7 +110,8 @@ func TestError(t *testing.T) {
 	t.Run("standard error", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
-		r := Context(req, w)
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
 
 		err := r.Error(errors.New("test error"), http.StatusBadRequest)
 
@@ -124,7 +129,8 @@ func TestError(t *testing.T) {
 	t.Run("validation error", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()
-		r := Context(req, w)
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
 
 		verr := &ValidationError{
 			FieldErrors: map[string]string{
@@ -161,7 +167,8 @@ func TestError(t *testing.T) {
 func TestCheck(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	err := r.Check("test message", errors.New("test error"))
 
@@ -176,7 +183,7 @@ func TestCheck(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	r = Context(req, w)
+	r = Context(e.NewContext(req, w))
 	err = r.Check("test message", nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -269,7 +276,8 @@ func TestDecodeForm(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/", nil)
 			req.PostForm = map[string][]string{tt.key: {tt.value}}
-			r := Context(req, httptest.NewRecorder())
+			e := echo.New()
+			r := Context(e.NewContext(req, httptest.NewRecorder()))
 
 			if tt.shouldPanic {
 				defer func() {
@@ -337,7 +345,8 @@ func TestDecodeForm_CustomTypes(t *testing.T) {
 		"text":   {"test"},
 		"string": {"value"},
 	}
-	r := Context(req, httptest.NewRecorder())
+	e := echo.New()
+	r := Context(e.NewContext(req, httptest.NewRecorder()))
 
 	var text TextUnmarshaler
 	err := r.DecodeForm("text", &text)
