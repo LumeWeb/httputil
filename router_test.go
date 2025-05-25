@@ -18,11 +18,11 @@ import (
 func TestRegisterRoutes(t *testing.T) {
 	tests := []struct {
 		name              string
-		routes           []RouteDefinition
-		accessSvcErr     error
-		wantRegisterErr  bool
+		routes            []RouteDefinition
+		accessSvcErr      error
+		wantRegisterErr   bool
 		wantSwaggerGenErr bool
-		wantAccessReg    bool
+		wantAccessReg     bool
 	}{
 		{
 			name: "successful registration",
@@ -33,9 +33,9 @@ func TestRegisterRoutes(t *testing.T) {
 					Handler: func(w http.ResponseWriter, r *http.Request) {},
 				},
 			},
-			wantRegisterErr:  false,
+			wantRegisterErr:   false,
 			wantSwaggerGenErr: false,
-			wantAccessReg:    false,
+			wantAccessReg:     false,
 		},
 		{
 			name: "with access control",
@@ -47,9 +47,9 @@ func TestRegisterRoutes(t *testing.T) {
 					Access:  "admin",
 				},
 			},
-			wantRegisterErr:  false,
+			wantRegisterErr:   false,
 			wantSwaggerGenErr: false,
-			wantAccessReg:    true,
+			wantAccessReg:     true,
 		},
 		{
 			name: "access service error",
@@ -61,10 +61,10 @@ func TestRegisterRoutes(t *testing.T) {
 					Access:  "admin",
 				},
 			},
-			accessSvcErr:     assert.AnError,
-			wantRegisterErr:  true,
+			accessSvcErr:      assert.AnError,
+			wantRegisterErr:   true,
 			wantSwaggerGenErr: false,
-			wantAccessReg:    true,
+			wantAccessReg:     true,
 		},
 	}
 
@@ -88,7 +88,7 @@ func TestRegisterRoutes(t *testing.T) {
 				accessSvc.AssertNotCalled(t, "RegisterRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			}
 
-			err = RegisterRoutes(ctx, muxRouter, gRouter, accessSvc, "test", tt.routes)
+			err = RegisterRoutes(ctx, gRouter, accessSvc, "test", tt.routes)
 
 			if tt.wantRegisterErr {
 				assert.Error(t, err)
@@ -214,7 +214,7 @@ func TestSwaggerDocsServed(t *testing.T) {
 			Handler: func(w http.ResponseWriter, r *http.Request) {},
 		},
 	)
-	err = RegisterRoutes(coreTesting.NewTestContext(t), muxRouter, gRouter, nil, "", routes)
+	err = RegisterRoutes(coreTesting.NewTestContext(t), gRouter, nil, "", routes)
 	require.NoError(t, err)
 
 	// Now generate the OpenAPI spec

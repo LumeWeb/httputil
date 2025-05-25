@@ -8,7 +8,7 @@ require (
 	github.com/Oudwins/zog v0.18.4
 	github.com/gorilla/mux v1.8.2-0.20240619235004-db9d1d0073d2
 	github.com/stretchr/testify v1.10.0
-	go.lumeweb.com/gswagger v0.0.0-20250524160736-ebc3c0a328ec
+	go.lumeweb.com/gswagger v0.0.0-20250525010010-2480f51b33ba
 	go.lumeweb.com/portal v0.4.2-0.20250504192002-4547d95e5a02
 	go.lumeweb.com/portal-middleware v0.0.0-20250521113541-65cbec90e2a1
 )
