@@ -45,7 +45,7 @@ func GetRouter(r Router) *mux.Router {
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func NewSwaggerRouter(muxRouter *mux.Router, info *apiInfo) (Router, error) {
+func NewSwaggerRouter(muxRouter *mux.Router, info APIInfoDefinition) (Router, error) {
 	router, err := swagger.NewRouter(gs.NewRouter(muxRouter), swagger.Options{
 		JSONDocumentationPath: SwaggerJSONPath,
 		YAMLDocumentationPath: SwaggerYAMLPath,
