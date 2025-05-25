@@ -8,9 +8,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gorilla/mux"
 	swagger "go.lumeweb.com/gswagger"
-	gs "go.lumeweb.com/gswagger/support/gorilla"  // Import the specific gorilla support package
-	"go.lumeweb.com/portal-middleware/auth/jwt"   // Assuming your JWT middleware is here
-	"go.lumeweb.com/portal-middleware/middleware" // Assuming your middleware is here
+	gs "go.lumeweb.com/gswagger/support/gorilla"
+	"go.lumeweb.com/portal-middleware/auth/jwt"
 	"go.lumeweb.com/portal/core"
 )
 
@@ -64,19 +63,16 @@ type RouteDefinition struct {
 	Handler http.HandlerFunc
 	// Access is the required access role for this route (e.g., core.ACCESS_ADMIN_ROLE).
 	Access string
-	// UseVerify indicates if the AccountVerifiedMiddleware should be applied.
-	UseVerify bool
-	// Use2FA indicates if the 2FA authentication middleware should be applied.
-	Use2FA bool
 	// Swagger contains the OpenAPI definitions for this route.
 	Swagger swagger.Definitions
+	// Middlewares contains route-specific middleware chain
+	Middlewares []mux.MiddlewareFunc
 }
 
 // RegisterRoutes registers a slice of RouteDefinitions with the provided Mux and gswagger routers.
 // It applies common middleware and specific middleware based on the RouteDefinition flags.
 // It also registers access control for the route.
 func RegisterRoutes(
-	ctx core.Context, // Pass the core context directly
 	gRouter *swagger.Router[gs.HandlerFunc, gs.Route], // gswagger router with gorilla types
 	accessSvc core.AccessService,
 	subdomain string,
@@ -90,16 +86,11 @@ func RegisterRoutes(
 		// Create the Mux route
 		muxRoute := muxRouter.HandleFunc(route.Path, route.Handler).Methods(route.Method, "OPTIONS") // Include OPTIONS for CORS
 
-		// Apply specific middleware based on flags
-		if route.UseVerify {
-			muxRoute.Use(middleware.AccountVerifiedMiddleware(ctx))
-		}
-		if route.Use2FA {
-			muxRoute.Use(middleware.AuthMiddleware(ctx, jwt.Purpose2FA))
-		}
-
-		// Apply common middleware
+		// Apply all middlewares in order
 		muxRoute.Use(commonMiddleware...)
+		for _, mw := range route.Middlewares {
+			muxRoute.Use(mw)
+		}
 
 		// Register with gswagger
 		// Since gRouter is typed with gs.HandlerFunc (which is http.HandlerFunc),
@@ -110,10 +101,7 @@ func RegisterRoutes(
 		}
 
 		// Register access control
-		if route.Access != "" {
-			if accessSvc == nil {
-				return fmt.Errorf("access service required for route %s with access control", route.Path)
-			}
+		if route.Access != "" && accessSvc != nil {
 			if err := accessSvc.RegisterRoute(subdomain, route.Path, route.Method, route.Access); err != nil {
 				return fmt.Errorf("failed to register access for route %s: %w", route.Path, err)
 			}
@@ -150,62 +138,39 @@ func DefineRoutes(routes ...RouteDefinition) []RouteDefinition {
 func AuthSwagger(
 	summary, description string,
 	purpose jwt.Purpose,
-	reqBody any,
-	respBody any,
 	errResp map[int]any,
 ) swagger.Definitions {
-	definitions := swagger.Definitions{
-		Summary:     summary,
-		Description: description,
-		Tags:        []string{"Authenticated"},
-		Security: swagger.SecurityRequirements{
-			{
-				"bearerAuth": []string{string(purpose)}, // Assumes "bearerAuth" security scheme is defined globally
-			},
-		},
-		Responses: map[int]swagger.ContentValue{
-			http.StatusOK: {
-				Description: "Success",
-				Content:     swagger.Content{"application/json": {Value: respBody}},
-			},
-			http.StatusUnauthorized: {
-				Description: "Unauthorized - Missing or invalid token",
-				Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Unauthorized"}}},
-			},
-			http.StatusForbidden: {
-				Description: "Forbidden - Insufficient permissions or unverified account",
-				Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Forbidden"}}},
-			},
-			http.StatusUnprocessableEntity: {
-				Description: "Validation Failed",
-				Content:     swagger.Content{"application/json": {Value: map[string]any{"error": "validation failed", "fields": map[string]string{}}}},
-			},
-			http.StatusInternalServerError: {
-				Description: "Internal Server Error",
-				Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Internal Server Error"}}},
-			},
-		},
+	def := baseDefinition()
+	def.Summary = summary
+	def.Description = description
+	def.Tags = []string{"Authenticated"}
+	def.Security = swagger.SecurityRequirements{
+		{"bearerAuth": []string{string(purpose)}},
 	}
 
-	// Add request body if provided
-	if reqBody != nil {
-		definitions.RequestBody = &swagger.ContentValue{
-			Content: swagger.Content{"application/json": {Value: reqBody}},
-			// Note: swagger.Definitions.RequestBody does not have a 'Required' field directly.
-			// This is typically set on the openapi3.RequestBody object itself, which gswagger handles internally.
-			// We can't set 'Required' here in the Definitions struct.
-		}
+	// Add standard responses
+	def.Responses[http.StatusOK] = swagger.ContentValue{
+		Description: "Success",
+		Content:     nil, // Response body will be defined by the route
+	}
+	def.Responses[http.StatusUnauthorized] = swagger.ContentValue{
+		Description: "Unauthorized",
+		Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Unauthorized"}}},
+	}
+	def.Responses[http.StatusForbidden] = swagger.ContentValue{
+		Description: "Forbidden",
+		Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Forbidden"}}},
 	}
 
-	// Add additional error responses
-	for status, body := range errResp {
-		definitions.Responses[status] = swagger.ContentValue{
-			Description: http.StatusText(status), // Use standard text for description
+	// Merge with error responses
+	for code, body := range errResp {
+		def.Responses[code] = swagger.ContentValue{
+			Description: http.StatusText(code),
 			Content:     swagger.Content{"application/json": {Value: body}},
 		}
 	}
 
-	return definitions
+	return def
 }
 
 // BasicSwagger generates basic Swagger definitions for an endpoint.
@@ -219,49 +184,23 @@ func AuthSwagger(
 // - errResp: A map of additional error status codes and example response bodies.
 func BasicSwagger(
 	summary, description string,
-	reqBody any,
-	respBody any,
 	errResp map[int]any,
+	opts ...SwaggerOption,
 ) swagger.Definitions {
-	definitions := swagger.Definitions{
-		Summary:     summary,
-		Description: description,
-		Tags:        []string{"Public"},
-		Responses: map[int]swagger.ContentValue{
-			http.StatusOK: {
-				Description: "Success",
-				Content:     swagger.Content{"application/json": {Value: respBody}},
-			},
-			http.StatusUnprocessableEntity: {
-				Description: "Validation Failed",
-				Content:     swagger.Content{"application/json": {Value: map[string]any{"error": "validation failed", "fields": map[string]string{}}}},
-			},
-			http.StatusInternalServerError: {
-				Description: "Internal Server Error",
-				Content:     swagger.Content{"application/json": {Value: map[string]string{"error": "Internal Server Error"}}},
-			},
-		},
-	}
+	def := baseDefinition()
+	def.Summary = summary
+	def.Description = description
+	def.Tags = []string{"Public"}
 
-	// Add request body if provided
-	if reqBody != nil {
-		definitions.RequestBody = &swagger.ContentValue{
-			Content: swagger.Content{"application/json": {Value: reqBody}},
-			// Note: swagger.Definitions.RequestBody does not have a 'Required' field directly.
-			// This is typically set on the openapi3.RequestBody object itself, which gswagger handles internally.
-			// We can't set 'Required' here in the Definitions struct.
-		}
-	}
-
-	// Add additional error responses
-	for status, body := range errResp {
-		definitions.Responses[status] = swagger.ContentValue{
-			Description: http.StatusText(status), // Use standard text for description
+	// Merge error responses
+	for code, body := range errResp {
+		def.Responses[code] = swagger.ContentValue{
+			Description: http.StatusText(code),
 			Content:     swagger.Content{"application/json": {Value: body}},
 		}
 	}
 
-	return definitions
+	return applyOpts(def, opts)
 }
 
 // PaginatedResponseSwagger generates Swagger definitions for an endpoint
@@ -285,9 +224,9 @@ func PaginatedResponseSwagger(
 	// Start with either AuthSwagger or BasicSwagger based on purpose
 	var definitions swagger.Definitions
 	if purpose != jwt.PurposeNone {
-		definitions = AuthSwagger(summary, description, purpose, reqBody, nil, errResp)
+		definitions = AuthSwagger(summary, description, purpose, errResp)
 	} else {
-		definitions = BasicSwagger(summary, description, reqBody, nil, errResp)
+		definitions = BasicSwagger(summary, description, errResp)
 	}
 
 	// Define the schema for the paginated response
@@ -526,9 +465,9 @@ func ListEndpointSwagger(
 	// Start with the base Swagger definitions (authenticated or public)
 	var definitions swagger.Definitions
 	if purpose != jwt.PurposeNone {
-		definitions = AuthSwagger(summary, description, purpose, nil, nil, errResp)
+		definitions = AuthSwagger(summary, description, purpose, errResp)
 	} else {
-		definitions = BasicSwagger(summary, description, nil, nil, errResp)
+		definitions = BasicSwagger(summary, description, errResp)
 	}
 
 	// Add standard query parameters using the chaining helpers

@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	swagger "go.lumeweb.com/gswagger"
 	"go.lumeweb.com/portal-middleware/auth/jwt"
-	coreTesting "go.lumeweb.com/portal/core/testing"
 	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 )
 
@@ -76,7 +75,6 @@ func TestRegisterRoutes(t *testing.T) {
 				Version("1.0.0"))
 			require.NoError(t, err)
 			accessSvc := coreMocks.NewMockAccessService(t)
-			ctx := coreTesting.NewTestContext(t)
 
 			if tt.wantAccessReg || tt.accessSvcErr != nil {
 				// If access registration is expected OR an access service error is expected,
@@ -88,7 +86,7 @@ func TestRegisterRoutes(t *testing.T) {
 				accessSvc.AssertNotCalled(t, "RegisterRoute", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			}
 
-			err = RegisterRoutes(ctx, gRouter, accessSvc, "test", tt.routes)
+			err = RegisterRoutes(gRouter, accessSvc, "test", tt.routes)
 
 			if tt.wantRegisterErr {
 				assert.Error(t, err)
@@ -130,11 +128,9 @@ func TestDefineRoutes(t *testing.T) {
 
 func TestAuthSwagger(t *testing.T) {
 	def := AuthSwagger(
-		"Test Summary",
+		"Test Summary", 
 		"Test Description",
 		jwt.PurposeLogin,
-		nil,
-		nil,
 		nil,
 	)
 
@@ -214,7 +210,7 @@ func TestSwaggerDocsServed(t *testing.T) {
 			Handler: func(w http.ResponseWriter, r *http.Request) {},
 		},
 	)
-	err = RegisterRoutes(coreTesting.NewTestContext(t), gRouter, nil, "", routes)
+	err = RegisterRoutes(gRouter, nil, "", routes)
 	require.NoError(t, err)
 
 	// Now generate the OpenAPI spec
@@ -258,4 +254,109 @@ func TestWithSortParams(t *testing.T) {
 	assert.Contains(t, def.Querystring, "_sort")
 	assert.Contains(t, def.Querystring, "_order")
 	assert.Contains(t, def.Querystring["_sort"].Description, "name, date")
+}
+
+func TestWithFilterParam(t *testing.T) {
+	def := swagger.Definitions{}
+	def = WithFilterParam(def, "age_gt", "Filter ages greater than value", 18)
+
+	assert.NotNil(t, def.Querystring)
+	assert.Contains(t, def.Querystring, "age_gt")
+	assert.Equal(t, "Filter ages greater than value", def.Querystring["age_gt"].Description)
+	assert.Equal(t, 18, def.Querystring["age_gt"].Schema.Value)
+}
+
+func TestListEndpointSwagger(t *testing.T) {
+	def := ListEndpointSwagger(
+		"List Users",
+		"Returns paginated list of users",
+		jwt.PurposeNone,
+		map[string]string{"name": "string"},
+		nil,
+		[]string{"name", "created_at"},
+		[]FilterParam{
+			{
+				Name:        "name_eq",
+				Description: "Filter by exact name match",
+				SchemaValue: "test",
+			},
+		},
+		nil,
+	)
+
+	assert.Equal(t, "List Users", def.Summary)
+	assert.Equal(t, "Returns paginated list of users", def.Description)
+	assert.Contains(t, def.Tags, "Public")
+	assert.Contains(t, def.Querystring, "_sort")
+	assert.Contains(t, def.Querystring, "_order")
+	assert.Contains(t, def.Querystring, "name_eq")
+}
+
+func TestTusPostSwagger(t *testing.T) {
+	def := TusPostSwagger(
+		"Create Upload",
+		"Create a new TUS upload",
+		map[int]any{
+			401: map[string]string{"error": "Unauthorized"},
+		},
+	)
+
+	assert.Equal(t, "Create Upload", def.Summary)
+	assert.Equal(t, "Create a new TUS upload", def.Description)
+	assert.Contains(t, def.Tags, "TUS")
+	assert.Contains(t, def.Parameters, "Tus-Resumable")
+	assert.Contains(t, def.Responses, http.StatusCreated)
+	assert.Contains(t, def.Responses, 401)
+}
+
+func TestTusHeadSwagger(t *testing.T) {
+	def := TusHeadSwagger(
+		"Get Upload Status",
+		"Get status of TUS upload",
+		nil,
+	)
+
+	assert.Equal(t, "Get Upload Status", def.Summary)
+	assert.Equal(t, "Get status of TUS upload", def.Description)
+	assert.Contains(t, def.Tags, "TUS")
+	assert.Contains(t, def.Responses, http.StatusOK)
+}
+
+func TestTusPatchSwagger(t *testing.T) {
+	def := TusPatchSwagger(
+		"Upload Chunk",
+		"Upload a chunk of data",
+		nil,
+	)
+
+	assert.Equal(t, "Upload Chunk", def.Summary)
+	assert.Equal(t, "Upload a chunk of data", def.Description)
+	assert.Contains(t, def.Tags, "TUS")
+	assert.NotNil(t, def.RequestBody)
+}
+
+func TestTusDeleteSwagger(t *testing.T) {
+	def := TusDeleteSwagger(
+		"Delete Upload",
+		"Delete a TUS upload",
+		nil,
+	)
+
+	assert.Equal(t, "Delete Upload", def.Summary)
+	assert.Equal(t, "Delete a TUS upload", def.Description)
+	assert.Contains(t, def.Tags, "TUS")
+	assert.Contains(t, def.Responses, http.StatusNoContent)
+}
+
+func TestTusOptionsSwagger(t *testing.T) {
+	def := TusOptionsSwagger(
+		"Get TUS Options",
+		"Get supported TUS options",
+		nil,
+	)
+
+	assert.Equal(t, "Get TUS Options", def.Summary)
+	assert.Equal(t, "Get supported TUS options", def.Description)
+	assert.Contains(t, def.Tags, "TUS")
+	assert.Contains(t, def.Responses, http.StatusOK)
 }
