@@ -3,6 +3,7 @@ package httputil
 import (
 	"bytes"
 	"errors"
+	"github.com/labstack/echo/v4"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -17,11 +18,12 @@ func TestValidate_ValidRequest(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3).Required(),
+		"Field": z.String().Min(3).Required(), // Match struct field name
 	})
 
 	validator.EXPECT().Schema().Return(schema)
@@ -38,7 +40,8 @@ func TestValidate_InvalidRequest(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
@@ -69,7 +72,8 @@ func TestValidate_NilSchema(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	validator.EXPECT().Schema().Return(nil)
@@ -90,7 +94,8 @@ func TestValidateRequest_Valid(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
@@ -113,7 +118,8 @@ func TestValidateRequest_Invalid(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{
@@ -175,7 +181,8 @@ func TestValidateRequest_NilSchema(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	// Create a RequestContext
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	// Create an instance of the DTOValidator with a nil schema
 	validator := mocks.NewMockDTOValidator(t)
@@ -214,7 +221,8 @@ func TestValidate_EmptyField(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	// Create and setup validator mock
 	validator := mocks.NewMockDTOValidator(t)
@@ -278,7 +286,8 @@ func TestValidationError_MultipleFields(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r := Context(req, w)
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
 	schema := z.Struct(z.Schema{

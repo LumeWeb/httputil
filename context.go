@@ -1,28 +1,30 @@
 package httputil
 
 import (
-	"context"
-	"net/http"
+	"github.com/labstack/echo/v4"
 )
 
 // RequestContext carries HTTP request-scoped values and provides utility methods
 // for handling the complete request/response lifecycle. It combines:
-// - Standard context.Context for cancellation and deadlines
-// - HTTP request object for reading request data
-// - HTTP response writer for sending responses
 // - Validation and encoding utilities
+// - Embedded Echo Context for framework features
 type RequestContext struct {
-	context.Context
-	Request  *http.Request
-	Response http.ResponseWriter
+	echo.Context // Embed the Echo Context interface
 }
 
-// Context creates a new RequestContext from an HTTP request and response writer.
+// Context creates a new RequestContext from an Echo context.
 // This should be the primary way to initialize the request context for handlers.
-func Context(r *http.Request, w http.ResponseWriter) RequestContext {
+func Context(c echo.Context) RequestContext {
+	if c == nil {
+		panic("nil echo.Context provided to httputil.Context()")
+	}
+	if c.Request() == nil {
+		panic("echo.Context with nil Request provided to httputil.Context()")
+	}
+	if c.Request().Context() == nil {
+		panic("http.Request with nil Context provided to httputil.Context()")
+	}
 	return RequestContext{
-		Context:  r.Context(),
-		Request:  r,
-		Response: w,
+		Context: c,
 	}
 }

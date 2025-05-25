@@ -39,6 +39,10 @@ type DefaultErrorHandler struct{}
 
 // HandleError implements ErrorHandler with status code detection
 func (h *DefaultErrorHandler) HandleError(ctx RequestContext, err error) {
+	if ctx.Request() == nil || err == nil {
+		return
+	}
+
 	var status = http.StatusInternalServerError
 
 	var jsonTypeErr *json.UnmarshalTypeError
@@ -100,16 +104,25 @@ func DecodeAndValidateRequest[M any, D DTORequest[M]](
 		opt(cfg)
 	}
 
+	// Ensure we have a valid error handler
+	if cfg.errorHandler == nil {
+		cfg.errorHandler = &DefaultErrorHandler{}
+	}
+
 	// Decode phase
 	if err := r.Decode(dto); err != nil {
-		cfg.errorHandler.HandleError(r, err)
+		if cfg.errorHandler != nil {
+			cfg.errorHandler.HandleError(r, err)
+		}
 		return zero, false
 	}
 
-	// Validation phase
-	if validator, ok := any(dto).(DTOValidator); ok {
+	// Validation phase - only if DTO implements DTOValidator
+	if validator, ok := any(dto).(DTOValidator); ok && validator != nil {
 		if verr := r.Validate(validator); verr != nil {
-			cfg.errorHandler.HandleError(r, verr)
+			if cfg.errorHandler != nil {
+				cfg.errorHandler.HandleError(r, verr)
+			}
 			return zero, false
 		}
 	}
@@ -117,7 +130,9 @@ func DecodeAndValidateRequest[M any, D DTORequest[M]](
 	// Model conversion
 	model, err := dto.ToModel()
 	if err != nil {
-		cfg.errorHandler.HandleError(r, err)
+		if cfg.errorHandler != nil {
+			cfg.errorHandler.HandleError(r, err)
+		}
 		return zero, false
 	}
 

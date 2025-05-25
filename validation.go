@@ -67,8 +67,16 @@ func IsValidationError(err error) bool {
 // - ValidationError with field-specific errors on failure
 // - Error wrapping original parse failure if schema validation cannot be performed
 func (r RequestContext) Validate(validator DTOValidator) error {
-	schema := validator.Schema()
+	if validator == nil {
+		return &ValidationError{
+			FieldErrors: map[string]string{
+				"": "validator is nil: invalid validator",
+			},
+			joinedError: errors.New("validator is nil: invalid validator"),
+		}
+	}
 
+	schema := validator.Schema()
 	if schema == nil {
 		return &ValidationError{
 			FieldErrors: map[string]string{
@@ -78,34 +86,37 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 		}
 	}
 
-	// Get a fresh copy of the request body
+	// Handle body re-reading
 	var body bytes.Buffer
-	if r.Request.GetBody == nil {
+	if r.Request().GetBody == nil {
 		// Read and restore body when GetBody isn't available
-		bodyContent, err := io.ReadAll(r.Request.Body)
+		bodyContent, err := io.ReadAll(r.Request().Body)
 		if err != nil {
 			return fmt.Errorf("error reading request body: %w", err)
 		}
-		// Restore original body from the read content
-		r.Request.Body = io.NopCloser(bytes.NewReader(bodyContent))
-		// Copy into validation buffer
+		r.Request().Body = io.NopCloser(bytes.NewReader(bodyContent))
 		body.Write(bodyContent)
 	} else {
 		// Use GetBody to get a fresh copy
-		bodyCopy, err := r.Request.GetBody()
+		bodyCopy, err := r.Request().GetBody()
 		if err != nil {
 			return fmt.Errorf("error getting request body: %w", err)
 		}
+		defer func(bodyCopy io.ReadCloser) {
+			err := bodyCopy.Close()
+			if err != nil {
+				r.Context.Logger().Error(err)
+			}
+		}(bodyCopy)
 		_, err = body.ReadFrom(bodyCopy)
 		if err != nil {
 			return fmt.Errorf("error reading request body: %w", err)
 		}
 	}
 
-	// Parse returns []ZogIssue and handles validation
+	// Parse returns []ZogIssue and handles validation using the request body
 	issues := schema.Parse(zjson.Decode(&body), validator)
 	if len(issues) > 0 {
-		// Use Zog's built-in sanitizer to convert issues to a simple map
 		sanitized := z.Issues.SanitizeMap(issues)
 
 		fieldErrors := make(map[string]string, len(sanitized))
@@ -143,21 +154,37 @@ func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string,
 			joinedError: errors.New("schema is nil: invalid schema"),
 		}
 	}
-	// Parse the request body using zog
-	errs := schema.Parse(zjson.Decode(r.Request.Body), entity)
-	if errs != nil {
-		// Use Zog's built-in sanitizer to convert errors to a simple map
-		// This avoids any type assertions and uses the official API
-		sanitized := z.Issues.SanitizeMap(errs)
 
-		// Convert from map[string][]string to map[string]string by taking the first error for each field
+	// Handle body re-reading
+	var body bytes.Buffer
+	if r.Request().GetBody == nil {
+		bodyContent, err := io.ReadAll(r.Request().Body)
+		if err != nil {
+			return nil, fmt.Errorf("error reading request body: %w", err)
+		}
+		r.Request().Body = io.NopCloser(bytes.NewReader(bodyContent))
+		body.Write(bodyContent)
+	} else {
+		bodyCopy, err := r.Request().GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("error getting request body: %w", err)
+		}
+		defer bodyCopy.Close()
+		_, err = body.ReadFrom(bodyCopy)
+		if err != nil {
+			return nil, fmt.Errorf("error reading request body: %w", err)
+		}
+	}
+
+	errs := schema.Parse(zjson.Decode(&body), entity)
+	if errs != nil {
+		sanitized := z.Issues.SanitizeMap(errs)
 		validationErrors := make(map[string]string)
 		for path, messages := range sanitized {
 			if len(messages) > 0 {
 				validationErrors[path] = messages[0]
 			}
 		}
-
 		return validationErrors, nil
 	}
 	return nil, nil

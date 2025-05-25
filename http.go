@@ -1,10 +1,8 @@
 package httputil
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -14,75 +12,59 @@ import (
 
 // Encode writes a JSON response to the client with consistent formatting:
 // - Empty slices/maps render as []/{} instead of null
-// - Sets application/json Content-Type header
 // - Uses indented JSON for human readability
-// - Handles special types through reflection
 func (r RequestContext) Encode(v any) {
-	r.Response.Header().Set("Content-Type", "application/json")
 	// encode nil slices as [] and nil maps as {} (instead of null)
 	if val := reflect.ValueOf(v); val.Kind() == reflect.Slice && val.Len() == 0 {
-		_, _ = r.Response.Write([]byte("[]\n"))
+		_ = r.JSON(http.StatusOK, []any{})
 		return
 	} else if val.Kind() == reflect.Map && val.Len() == 0 {
-		_, _ = r.Response.Write([]byte("{}\n"))
+		_ = r.JSON(http.StatusOK, map[string]any{})
 		return
 	}
-	enc := json.NewEncoder(r.Response)
-	enc.SetIndent("", "\t")
-	_ = enc.Encode(v)
+	_ = r.JSONPretty(http.StatusOK, v, "\t")
 }
 
 // Decode reads and parses the request body as JSON into the provided value.
 // Returns an error wrapped with type information if decoding fails
 func (r RequestContext) Decode(v any) error {
-	// Read and restore body when GetBody isn't available
-	bodyContent, err := io.ReadAll(r.Request.Body)
-	if err != nil {
-		return fmt.Errorf("error reading request body: %w", err)
-	}
-	// Restore original body from the read content
-	reader := bytes.NewReader(bodyContent)
-	r.Request.Body = io.NopCloser(reader)
-	if err := json.NewDecoder(r.Request.Body).Decode(v); err != nil {
+	if err := r.Bind(v); err != nil {
 		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
-	}
-	_, err = reader.Seek(0, io.SeekStart)
-	if err != nil {
-		return fmt.Errorf("error seeking to beginning of request body: %w", err)
 	}
 	return nil
 }
 
 // Error writes an HTTP error response and returns the error. Formats:
 // - ValidationErrors as 422 Unprocessable Entity with field-specific errors
-// - All other errors as JSON response with "error" field and appropriate status code
-// Maintains consistent JSON formatting for all error responses.
+// - All other errors using Echo's error handler
 func (r RequestContext) Error(err error, status int) error {
-	// Handle validation errors with structured response
-	if vErr, ok := err.(*ValidationError); ok {
-		r.Response.Header().Set("Content-Type", "application/json")
-		r.Response.WriteHeader(status)
-		json.NewEncoder(r.Response).Encode(map[string]any{
-			"error":  "validation failed",
-			"fields": vErr.Fields(),
-		})
-		return err
+	if err == nil {
+		return nil
 	}
 
-	// Default error handling with JSON response
-	r.Response.Header().Set("Content-Type", "application/json")
-	r.Response.WriteHeader(status)
-	json.NewEncoder(r.Response).Encode(map[string]any{
-		"error": err.Error(),
-	})
-	return err
+	var vErr *ValidationError
+	if errors.As(err, &vErr) {
+		err = r.JSON(status, map[string]any{
+			"error":  vErr.Error(),
+			"fields": vErr.Fields(),
+		})
+		if err != nil {
+			return err
+		}
+		return vErr // Return original validation error
+	}
+	// Return the error from the JSON call
+	jsonErr := r.JSON(status, map[string]any{"error": err.Error()})
+	if jsonErr != nil {
+		return jsonErr
+	}
+	return err // Return original error for test assertions
 }
 
 // Check simplifies error handling by:
 // - Returning nil if err is nil
 // - Wrapping the error with a message
 // - Sending an HTTP 500 response if error exists
-// Use this for checking operational errors that should result in server errors
 func (r RequestContext) Check(msg string, err error) error {
 	if err != nil {
 		return r.Error(fmt.Errorf("%v: %w", msg, err), http.StatusInternalServerError)
@@ -96,14 +78,7 @@ func (r RequestContext) Check(msg string, err error) error {
 // - Custom types implementing UnmarshalText or LoadString interfaces
 // Panics if passed an unsupported type
 func (r RequestContext) DecodeForm(key string, v any) error {
-	// Ensure form is parsed first
-	if r.Request.PostForm == nil {
-		err := r.Request.ParseForm()
-		if err != nil {
-			return err
-		}
-	}
-	value := r.Request.PostFormValue(key)
+	value := r.FormValue(key)
 	if value == "" {
 		return nil
 	}
@@ -134,7 +109,11 @@ func (r RequestContext) DecodeForm(key string, v any) error {
 		panic(fmt.Sprintf("unsupported type %T", v))
 	}
 	if err != nil {
-		return r.Error(fmt.Errorf("invalid form value %q: %w", key, err), http.StatusBadRequest)
+		err = r.Error(fmt.Errorf("invalid form value %q: %w", key, err), http.StatusBadRequest)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("invalid form value %q: %w", key, err)
 	}
 	return nil
 }
