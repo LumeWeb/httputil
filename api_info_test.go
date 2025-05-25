@@ -80,4 +80,39 @@ func TestAPIInfoBuilder(t *testing.T) {
 		assert.Empty(t, oasInfo.Title)
 		assert.Empty(t, oasInfo.Version)
 	})
+
+	t.Run("getter methods", func(t *testing.T) {
+		info := APIInfo().
+			Title("Test API").
+			Version("1.0.0").
+			Description("Test Description").
+			TermsOfService("https://example.com/tos").
+			Contact("support@example.com", "Support Team").
+			License("MIT", "https://opensource.org/licenses/MIT")
+
+		assert.Equal(t, "Test API", info.GetTitle())
+		assert.Equal(t, "1.0.0", info.GetVersion())
+		assert.Equal(t, "Test Description", info.GetDescription())
+		assert.Equal(t, "https://example.com/tos", info.GetTermsOfService())
+
+		email, name := info.GetContact()
+		assert.Equal(t, "support@example.com", email)
+		assert.Equal(t, "Support Team", name)
+
+		licenseName, licenseURL := info.GetLicense()
+		assert.Equal(t, "MIT", licenseName)
+		assert.Equal(t, "https://opensource.org/licenses/MIT", licenseURL)
+	})
+
+	t.Run("nil contact and license getters", func(t *testing.T) {
+		info := APIInfo().Title("Test").Version("1.0")
+
+		email, name := info.GetContact()
+		assert.Empty(t, email)
+		assert.Empty(t, name)
+
+		licenseName, licenseURL := info.GetLicense()
+		assert.Empty(t, licenseName)
+		assert.Empty(t, licenseURL)
+	})
 }
