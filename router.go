@@ -18,6 +18,13 @@ const (
 	SwaggerYAMLPath = "/swagger.yaml" // Default path for YAML OpenAPI spec
 )
 
+type Router = *swagger.Router[gs.HandlerFunc, gs.Route]
+
+// GetRouter returns the underlying mux.Router from a httputil.Router
+func GetRouter(r Router) *mux.Router {
+	return swagger.GetRouter[*mux.Router, gs.HandlerFunc, gs.Route](r.Router())
+}
+
 // NewSwaggerRouter creates a new gswagger Router instance from a mux.Router with default OpenAPI options.
 // It initializes the OpenAPI specification with the provided API info and sets up standard documentation paths.
 //
@@ -38,7 +45,7 @@ const (
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-func NewSwaggerRouter(muxRouter *mux.Router, info *apiInfo) (*swagger.Router[gs.HandlerFunc, gs.Route], error) {
+func NewSwaggerRouter(muxRouter *mux.Router, info *apiInfo) (Router, error) {
 	router, err := swagger.NewRouter(gs.NewRouter(muxRouter), swagger.Options{
 		JSONDocumentationPath: SwaggerJSONPath,
 		YAMLDocumentationPath: SwaggerYAMLPath,
@@ -73,14 +80,14 @@ type RouteDefinition struct {
 // It applies common middleware and specific middleware based on the RouteDefinition flags.
 // It also registers access control for the route.
 func RegisterRoutes(
-	gRouter *swagger.Router[gs.HandlerFunc, gs.Route], // gswagger router with gorilla types
+	gRouter Router, // gswagger router with gorilla types
 	accessSvc core.AccessService,
 	subdomain string,
 	routes []RouteDefinition,
 	commonMiddleware ...mux.MiddlewareFunc,
 ) error {
 
-	muxRouter := swagger.GetRouter[*mux.Router, gs.HandlerFunc, gs.Route](gRouter.Router())
+	muxRouter := GetRouter(gRouter)
 
 	for _, route := range routes {
 		// Create the Mux route
@@ -213,14 +220,7 @@ func BasicSwagger(
 // - itemSchema: An instance of the schema for a single item in the list.
 // - paginationSchema: An instance of the schema for pagination metadata (can be nil).
 // - errResp: Additional error responses.
-func PaginatedResponseSwagger(
-	summary, description string,
-	purpose jwt.Purpose,
-	reqBody any,
-	itemSchema any,
-	paginationSchema any,
-	errResp map[int]any,
-) swagger.Definitions {
+func PaginatedResponseSwagger(summary, description string, purpose jwt.Purpose, itemSchema, paginationSchema any, errResp map[int]any) swagger.Definitions {
 	// Start with either AuthSwagger or BasicSwagger based on purpose
 	var definitions swagger.Definitions
 	if purpose != jwt.PurposeNone {
