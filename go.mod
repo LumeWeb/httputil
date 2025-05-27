@@ -9,7 +9,7 @@ require (
 	github.com/getkin/kin-openapi v0.132.0
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/stretchr/testify v1.10.0
-	go.lumeweb.com/gswagger v0.11.0
+	go.lumeweb.com/gswagger v0.16.1
 )
 
 require (

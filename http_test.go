@@ -15,34 +15,56 @@ import (
 
 func TestEncode(t *testing.T) {
 	testCases := []struct {
-		name     string
-		input    any
-		expected string
+		name        string
+		input       any
+		expected    string
+		expectError bool
 	}{
 		{
-			name:     "Nil Slice",
-			input:    []int(nil),
-			expected: "[]\n",
+			name:        "Nil Slice",
+			input:       []int(nil),
+			expected:    "[]\n",
+			expectError: false,
 		},
 		{
-			name:     "Empty Slice",
-			input:    []int{},
-			expected: "[]\n",
+			name:        "Empty Slice",
+			input:       []int{},
+			expected:    "[]\n",
+			expectError: false,
 		},
 		{
-			name:     "Nil Map",
-			input:    map[string]int(nil),
-			expected: "{}\n",
+			name:        "Nil Map",
+			input:       map[string]int(nil),
+			expected:    "{}\n",
+			expectError: false,
 		},
 		{
-			name:     "Empty Map",
-			input:    map[string]int{},
-			expected: "{}\n",
+			name:        "Empty Map",
+			input:       map[string]int{},
+			expected:    "{}\n",
+			expectError: false,
 		},
 		{
-			name:     "Struct",
-			input:    struct{ Name string }{Name: "test"},
-			expected: "{\n\t\"Name\": \"test\"\n}\n",
+			name:        "Struct",
+			input:       struct{ Name string }{Name: "test"},
+			expected:    "{\n\t\"Name\": \"test\"\n}\n",
+			expectError: false,
+		},
+		{
+			name:        "Channel Type",
+			input:       make(chan int),
+			expectError: true,
+		},
+		{
+			name:        "Struct With Unexported Field",
+			input:       struct{ name string }{name: "test"}, // lowercase field
+			expected:    "{}\n",
+			expectError: false,
+		},
+		{
+			name:        "Function Type",
+			input:       func() {},
+			expectError: true,
 		},
 	}
 
@@ -53,13 +75,22 @@ func TestEncode(t *testing.T) {
 			e := echo.New()
 			r := Context(e.NewContext(req, w))
 
-			r.Encode(tc.input)
+			err := r.Encode(tc.input)
 
-			if w.Body.String() != tc.expected {
-				t.Errorf("expected %q, got %q", tc.expected, w.Body.String())
-			}
-			if w.Header().Get("Content-Type") != "application/json" {
-				t.Errorf("expected Content-Type to be application/json, got %q", w.Header().Get("Content-Type"))
+			if tc.expectError {
+				if err == nil {
+					t.Error("expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if w.Body.String() != tc.expected {
+					t.Errorf("expected %q, got %q", tc.expected, w.Body.String())
+				}
+				if w.Header().Get("Content-Type") != "application/json" {
+					t.Errorf("expected Content-Type to be application/json, got %q", w.Header().Get("Content-Type"))
+				}
 			}
 		})
 	}

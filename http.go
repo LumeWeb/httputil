@@ -13,16 +13,14 @@ import (
 // Encode writes a JSON response to the client with consistent formatting:
 // - Empty slices/maps render as []/{} instead of null
 // - Uses indented JSON for human readability
-func (r RequestContext) Encode(v any) {
+func (r RequestContext) Encode(v any) error {
 	// encode nil slices as [] and nil maps as {} (instead of null)
 	if val := reflect.ValueOf(v); val.Kind() == reflect.Slice && val.Len() == 0 {
-		_ = r.JSON(http.StatusOK, []any{})
-		return
+		return r.JSON(http.StatusOK, []any{})
 	} else if val.Kind() == reflect.Map && val.Len() == 0 {
-		_ = r.JSON(http.StatusOK, map[string]any{})
-		return
+		return r.JSON(http.StatusOK, map[string]any{})
 	}
-	_ = r.JSONPretty(http.StatusOK, v, "\t")
+	return r.JSONPretty(http.StatusOK, v, "\t")
 }
 
 // Decode reads and parses the request body as JSON into the provided value.
