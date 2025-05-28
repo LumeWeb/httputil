@@ -26,9 +26,15 @@ func (r RequestContext) Encode(v any) error {
 // Decode reads and parses the request body as JSON into the provided value.
 // Returns an error wrapped with type information if decoding fails
 func (r RequestContext) Decode(v any) error {
-	if err := r.Bind(v); err != nil {
+	_, err := r.readRequestBody()
+	if err != nil {
+		return err
+	}
+
+	if err = r.Bind(v); err != nil {
 		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
 	}
+
 	return nil
 }
 
