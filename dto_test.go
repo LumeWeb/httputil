@@ -267,7 +267,7 @@ func (d *simpleDTO) ToModel() (simpleModel, error) {
 	return simpleModel{Name: d.Name}, nil
 }
 
-func TestDecodeAndValidateRequest_WithValidator(t *testing.T) {
+func TestDecodeAndValidateRequest_WithValidatorAndGetBody(t *testing.T) {
 	body := []byte(`{"field": "valid"}`)
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -309,12 +309,103 @@ func TestDecodeAndValidateRequest_WithValidator(t *testing.T) {
 	}
 }
 
-func TestDecodeAndValidateRequest_WithValidatorError(t *testing.T) {
+func TestDecodeAndValidateRequest_WithValidatorNoGetBody(t *testing.T) {
+	body := []byte(`{"field": "valid"}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	// Create mock validator
+	validator := mocks.NewMockDTOValidator(t)
+	schema := z.Struct(z.Schema{
+		"Field": z.String().Min(3).Required(), // Match struct field name
+	})
+	validator.EXPECT().Schema().Return(schema)
+
+	// Create mock DTO that implements both DTORequest and DTOValidator
+	dto := &struct {
+		*mocks.MockDTORequest[*struct{ Field string }]
+		*mocks.MockDTOValidator
+		Field string `json:"field"`
+	}{
+		MockDTORequest:   mocks.NewMockDTORequest[*struct{ Field string }](t),
+		MockDTOValidator: validator,
+	}
+
+	// Set up expectations
+	model := &struct{ Field string }{Field: "valid"}
+	dto.MockDTORequest.EXPECT().ToModel().Return(model, nil).Maybe()
+	dto.MockDTOValidator.EXPECT().Schema().Return(schema)
+
+	result, ok := DecodeAndValidateRequest(r, dto)
+	if !ok {
+		t.Fatal("Unexpected validation failure")
+	}
+	if result.Field != "valid" {
+		t.Errorf("Expected model field 'valid', got %q", result.Field)
+	}
+}
+
+func TestDecodeAndValidateRequest_WithValidatorErrorAndGetBody(t *testing.T) {
 	body := []byte(`{"field": "iv"}`)
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	validator := mocks.NewMockDTOValidator(t)
+	schema := z.Struct(z.Schema{
+		"field": z.String().Min(3).Required(),
+	})
+	validator.EXPECT().Schema().Return(schema)
+
+	// Create mock DTO that implements both interfaces
+	dto := &struct {
+		*mocks.MockDTORequest[*struct{ Field string }]
+		*mocks.MockDTOValidator
+		Field string `json:"field"`
+	}{
+		MockDTORequest:   mocks.NewMockDTORequest[*struct{ Field string }](t),
+		MockDTOValidator: validator,
+	}
+
+	_, ok := DecodeAndValidateRequest(r, dto)
+	if ok {
+		t.Fatal("Expected validation failure, got success")
+	}
+
+	// Verify response status and error format
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("Expected status code %d, got %d", http.StatusUnprocessableEntity, w.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	if resp["error"] == nil {
+		t.Error("Expected error message in response")
+	}
+
+	fields, ok := resp["fields"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected 'fields' to be a map in the response")
+	}
+	if len(fields) == 0 {
+		t.Error("Expected field errors in response")
+	}
+}
+
+func TestDecodeAndValidateRequest_WithValidatorErrorNoGetBody(t *testing.T) {
+	body := []byte(`{"field": "iv"}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	e := echo.New()

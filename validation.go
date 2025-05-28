@@ -86,36 +86,13 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 		}
 	}
 
-	// Handle body re-reading
-	var body bytes.Buffer
-	if r.Request().GetBody == nil {
-		// Read and restore body when GetBody isn't available
-		bodyContent, err := io.ReadAll(r.Request().Body)
-		if err != nil {
-			return fmt.Errorf("error reading request body: %w", err)
-		}
-		r.Request().Body = io.NopCloser(bytes.NewReader(bodyContent))
-		body.Write(bodyContent)
-	} else {
-		// Use GetBody to get a fresh copy
-		bodyCopy, err := r.Request().GetBody()
-		if err != nil {
-			return fmt.Errorf("error getting request body: %w", err)
-		}
-		defer func(bodyCopy io.ReadCloser) {
-			err := bodyCopy.Close()
-			if err != nil {
-				r.Context.Logger().Error(err)
-			}
-		}(bodyCopy)
-		_, err = body.ReadFrom(bodyCopy)
-		if err != nil {
-			return fmt.Errorf("error reading request body: %w", err)
-		}
+	body, err := r.readRequestBody()
+	if err != nil {
+		return fmt.Errorf("error reading request body: %w", err)
 	}
 
 	// Parse returns []ZogIssue and handles validation using the request body
-	issues := schema.Parse(zjson.Decode(&body), validator)
+	issues := schema.Parse(zjson.Decode(body), validator)
 	if len(issues) > 0 {
 		sanitized := z.Issues.SanitizeMap(issues)
 
@@ -155,28 +132,12 @@ func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string,
 		}
 	}
 
-	// Handle body re-reading
-	var body bytes.Buffer
-	if r.Request().GetBody == nil {
-		bodyContent, err := io.ReadAll(r.Request().Body)
-		if err != nil {
-			return nil, fmt.Errorf("error reading request body: %w", err)
-		}
-		r.Request().Body = io.NopCloser(bytes.NewReader(bodyContent))
-		body.Write(bodyContent)
-	} else {
-		bodyCopy, err := r.Request().GetBody()
-		if err != nil {
-			return nil, fmt.Errorf("error getting request body: %w", err)
-		}
-		defer bodyCopy.Close()
-		_, err = body.ReadFrom(bodyCopy)
-		if err != nil {
-			return nil, fmt.Errorf("error reading request body: %w", err)
-		}
+	body, err := r.readRequestBody()
+	if err != nil {
+		return nil, fmt.Errorf("error reading request body: %w", err)
 	}
 
-	errs := schema.Parse(zjson.Decode(&body), entity)
+	errs := schema.Parse(zjson.Decode(body), entity)
 	if errs != nil {
 		sanitized := z.Issues.SanitizeMap(errs)
 		validationErrors := make(map[string]string)
@@ -190,8 +151,70 @@ func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string,
 	return nil, nil
 }
 
+func (r RequestContext) readRequestBody() (*bytes.Buffer, error) {
+	var body bytes.Buffer
+
+	if r.Request().GetBody == nil {
+		// Read and cache the original body content
+		bodyContent, err := io.ReadAll(r.Request().Body)
+		if err != nil {
+			return nil, err
+		}
+
+		// Replace body with seekable version
+		r.Request().Body = newSeekableBuffer(bodyContent)
+
+		// Set GetBody factory
+		r.Request().GetBody = getBodyFactory(bodyContent)
+
+		// Store content in our buffer
+		body.Write(bodyContent)
+	} else {
+		// Use existing GetBody functionality
+		bodyCopy, err := r.Request().GetBody()
+		if err != nil {
+			return nil, err
+		}
+		defer func(bodyCopy io.ReadCloser) {
+			err := bodyCopy.Close()
+			if err != nil {
+				r.Context.Logger().Error(err)
+			}
+		}(bodyCopy)
+
+		if _, err := body.ReadFrom(bodyCopy); err != nil {
+			return nil, err
+		}
+	}
+
+	return &body, nil
+}
+
 // ToJSON is a generic helper function that marshals data to JSON.
 // Provides consistent JSON encoding across the package.
 func ToJSON[T any](data T) ([]byte, error) {
 	return json.Marshal(data)
+}
+
+// newSeekableBuffer creates a new seekable ReadCloser from the given content
+func newSeekableBuffer(content []byte) io.ReadCloser {
+	return &seekableBuffer{
+		Reader: bytes.NewReader(content),
+	}
+}
+
+// seekableBuffer implements io.ReadCloser with seeking support
+type seekableBuffer struct {
+	*bytes.Reader
+}
+
+func (s *seekableBuffer) Close() error {
+	return nil
+}
+
+// getBodyFactory creates a GetBody function for the given content
+func getBodyFactory(content []byte) func() (io.ReadCloser, error) {
+	return func() (io.ReadCloser, error) {
+		return newSeekableBuffer(content), nil
+	}
 }
