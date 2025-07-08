@@ -1,14 +1,107 @@
 package httputil
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// FileUploadResult contains the uploaded file and its metadata
+type FileUploadResult struct {
+	File     io.ReadSeekCloser
+	Size     uint64
+	Filename string
+}
+
+// PrepareFileUpload handles both multipart form uploads and raw body uploads.
+// It supports:
+// - Multipart form file uploads (with Content-Type: multipart/form-data)
+// - Raw binary uploads (with any other Content-Type)
+// - Automatic handling of seekable vs non-seekable sources
+// - Size validation against maxUploadSize
+func (r RequestContext) PrepareFileUpload(maxUploadSize int64) (*FileUploadResult, error) {
+	req := r.Request()
+	contentType := req.Header.Get("Content-Type")
+
+	// Handle multipart form data uploads
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		// Check Content-Length header first to prevent processing large files
+		if req.ContentLength > maxUploadSize {
+			return nil, fmt.Errorf("file size exceeds maximum allowed size of %d bytes", maxUploadSize)
+		}
+
+		if err := req.ParseMultipartForm(maxUploadSize); err != nil {
+			return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+		}
+
+		multipartFile, multipartHeader, err := req.FormFile("file")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get file from form: %w", err)
+		}
+
+		// Check if the multipart file supports seeking
+		if seeker, ok := multipartFile.(io.Seeker); ok {
+			// More reliable seek test - seek to start and back to original position
+			if _, err := seeker.Seek(0, io.SeekStart); err == nil {
+				// Success - we can use the original file with seeking support
+				defer func() {
+					if err != nil {
+						multipartFile.Close()
+					}
+				}()
+				return &FileUploadResult{
+					File:     multipartFile,
+					Size:     uint64(multipartHeader.Size),
+					Filename: multipartHeader.Filename,
+				}, nil
+			}
+		}
+
+		// If seeking isn't supported or failed, fallback to buffering
+		defer multipartFile.Close()
+		data, err := io.ReadAll(multipartFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read multipart file: %w", err)
+		}
+
+		return &FileUploadResult{
+			File:     readSeekNopCloser{bytes.NewReader(data)},
+			Size:     uint64(len(data)),
+			Filename: multipartHeader.Filename,
+		}, nil
+	}
+
+	// Handle raw body uploads with size-limited reader
+	limitedReader := &io.LimitedReader{R: req.Body, N: maxUploadSize + 1}
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	if limitedReader.N <= 0 {
+		return nil, fmt.Errorf("file size exceeds maximum allowed size of %d bytes", maxUploadSize)
+	}
+
+	return &FileUploadResult{
+		File: readSeekNopCloser{bytes.NewReader(data)},
+		Size: uint64(len(data)),
+	}, nil
+}
+
+// readSeekNopCloser implements io.ReadSeekCloser for bytes.Reader
+type readSeekNopCloser struct {
+	*bytes.Reader
+}
+
+func (rsnc readSeekNopCloser) Close() error {
+	return nil
+}
 
 // Encode writes a JSON response to the client with consistent formatting:
 // - Empty slices/maps render as []/{} instead of null
