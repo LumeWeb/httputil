@@ -2,9 +2,13 @@ package httputil
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -368,6 +372,177 @@ type StringLoader string
 func (s *StringLoader) LoadString(value string) error {
 	*s = StringLoader("loaded: " + value)
 	return nil
+}
+
+func TestPrepareFileUpload_Multipart(t *testing.T) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = part.Write([]byte("test file content"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+
+	req := httptest.NewRequest("POST", "/upload", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	result, err := r.PrepareFileUpload(1024 * 1024) // 1MB limit
+	if err != nil {
+		t.Fatalf("PrepareFileUpload failed: %v", err)
+	}
+	defer result.File.Close()
+
+	if result.Filename != "test.txt" {
+		t.Errorf("Expected filename 'test.txt', got '%s'", result.Filename)
+	}
+	if result.Size != 17 {
+		t.Errorf("Expected size 17, got %d", result.Size)
+	}
+
+	content, err := io.ReadAll(result.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "test file content" {
+		t.Errorf("Expected content 'test file content', got '%s'", string(content))
+	}
+}
+
+func TestPrepareFileUpload_RawBody(t *testing.T) {
+	content := []byte("raw file content")
+	req := httptest.NewRequest("POST", "/upload", bytes.NewReader(content))
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	result, err := r.PrepareFileUpload(1024 * 1024) // 1MB limit
+	if err != nil {
+		t.Fatalf("PrepareFileUpload failed: %v", err)
+	}
+	defer result.File.Close()
+
+	if result.Size != uint64(len(content)) {
+		t.Errorf("Expected size %d, got %d", len(content), result.Size)
+	}
+
+	readContent, err := io.ReadAll(result.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(readContent, content) {
+		t.Errorf("Expected content %q, got %q", content, readContent)
+	}
+}
+
+func TestPrepareFileUpload_SizeLimit(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentSize int
+		limit       int64
+		expectError bool
+	}{
+		{
+			name:        "Raw body at limit",
+			contentSize: 10 << 20, // 10MB
+			limit:       10 << 20, // 10MB limit
+			expectError: false,
+		},
+		{
+			name:        "Raw body over limit",
+			contentSize: 11 << 20, // 11MB
+			limit:       10 << 20, // 10MB limit
+			expectError: true,
+		},
+		{
+			name:        "Multipart at limit",
+			contentSize: 10 << 20, // 10MB
+			limit:       0,        // 0 + 10MB buffer
+			expectError: false,
+		},
+		{
+			name:        "Multipart over limit",
+			contentSize: 11 << 20, // 11MB
+			limit:       1,        // 0 + 10MB buffer
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if strings.Contains(tt.name, "Multipart") {
+				// Test multipart form
+				body := &bytes.Buffer{}
+				writer := multipart.NewWriter(body)
+				part, err := writer.CreateFormFile("file", "test.txt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Fill with random data instead of null bytes
+				data := make([]byte, tt.contentSize)
+				_, err = rand.Read(data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = part.Write(data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = writer.Close()
+				if err != nil {
+					require.NoError(t, err)
+				}
+
+				req := httptest.NewRequest("POST", "/upload", body)
+				req.Header.Set("Content-Type", writer.FormDataContentType())
+				w := httptest.NewRecorder()
+				e := echo.New()
+				r := Context(e.NewContext(req, w))
+
+				_, err = r.PrepareFileUpload(tt.limit)
+				if tt.expectError {
+					if err == nil {
+						t.Error("Expected error for exceeding size limit")
+					}
+					if !strings.Contains(err.Error(), "exceeds maximum allowed size") {
+						t.Errorf("Expected size limit error, got: %v", err)
+					}
+				} else if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			} else {
+				// Test raw body
+				// Fill with random data instead of null bytes
+				data := make([]byte, tt.contentSize)
+				_, err := rand.Read(data)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := httptest.NewRequest("POST", "/upload", bytes.NewReader(data))
+				w := httptest.NewRecorder()
+				e := echo.New()
+				r := Context(e.NewContext(req, w))
+
+				_, err = r.PrepareFileUpload(tt.limit)
+				if tt.expectError {
+					if err == nil {
+						t.Error("Expected error for exceeding size limit")
+					}
+					if !strings.Contains(err.Error(), "exceeds maximum allowed size") {
+						t.Errorf("Expected size limit error, got: %v", err)
+					}
+				} else if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
 }
 
 func TestDecodeForm_CustomTypes(t *testing.T) {
