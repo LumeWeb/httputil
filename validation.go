@@ -61,7 +61,7 @@ func IsValidationError(err error) bool {
 	return errors.As(err, &verr)
 }
 
-// Validate applies schema validation to the request body using zog schemas.
+// Validate applies schema validation against a pre-populated DTOValidator.
 // Returns:
 // - nil on successful validation
 // - ValidationError with field-specific errors on failure
@@ -86,13 +86,8 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 		}
 	}
 
-	body, err := r.readRequestBody()
-	if err != nil {
-		return fmt.Errorf("error reading request body: %w", err)
-	}
-
-	// Parse returns []ZogIssue and handles validation using the request body
-	issues := schema.Parse(zjson.Decode(body), validator)
+	// Validate returns []ZogIssue and handles validation using the request body
+	issues := schema.Validate(validator)
 	if len(issues) > 0 {
 		sanitized := z.Issues.SanitizeMap(issues)
 
