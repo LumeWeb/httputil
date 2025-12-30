@@ -89,17 +89,22 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 	// Validate returns []ZogIssue and handles validation using the request body
 	issues := schema.Validate(validator)
 	if len(issues) > 0 {
-		sanitized := z.Issues.SanitizeMap(issues)
-
-		fieldErrors := make(map[string]string, len(sanitized))
+		fieldErrors := make(map[string]string, len(issues))
 		var errs []error
 
-		for path, messages := range sanitized {
-			if len(messages) > 0 {
-				msg := fmt.Sprintf("%s: %s", path, messages[0])
-				fieldErrors[path] = msg
-				errs = append(errs, errors.New(msg))
+		for _, issue := range issues {
+			path := issue.PathString()
+			if len(issue.Message) == 0 {
+				continue
 			}
+			var msg string
+			if len(path) > 0 {
+				msg = fmt.Sprintf("%s: %s", path, issue.Message)
+			} else {
+				msg = issue.Message
+			}
+			fieldErrors[path] = msg
+			errs = append(errs, errors.New(msg))
 		}
 
 		return &ValidationError{
@@ -134,12 +139,13 @@ func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string,
 
 	errs := schema.Parse(zjson.Decode(body), entity)
 	if errs != nil {
-		sanitized := z.Issues.SanitizeMap(errs)
 		validationErrors := make(map[string]string)
-		for path, messages := range sanitized {
-			if len(messages) > 0 {
-				validationErrors[path] = messages[0]
+		for _, issue := range errs {
+			path := issue.PathString()
+			if len(issue.Message) == 0 {
+				continue
 			}
+			validationErrors[path] = issue.Message
 		}
 		return validationErrors, nil
 	}

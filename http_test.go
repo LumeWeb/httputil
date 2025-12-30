@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"github.com/docker/go-units"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -393,7 +394,7 @@ func TestPrepareFileUpload_Multipart(t *testing.T) {
 	e := echo.New()
 	r := Context(e.NewContext(req, w))
 
-	result, err := r.PrepareFileUpload(1024 * 1024) // 1MB limit
+	result, err := r.PrepareFileUpload(units.MB) // 1MB limit
 	if err != nil {
 		t.Fatalf("PrepareFileUpload failed: %v", err)
 	}
@@ -422,7 +423,7 @@ func TestPrepareFileUpload_RawBody(t *testing.T) {
 	e := echo.New()
 	r := Context(e.NewContext(req, w))
 
-	result, err := r.PrepareFileUpload(1024 * 1024) // 1MB limit
+	result, err := r.PrepareFileUpload(units.MB) // 1MB limit
 	if err != nil {
 		t.Fatalf("PrepareFileUpload failed: %v", err)
 	}
@@ -450,26 +451,26 @@ func TestPrepareFileUpload_SizeLimit(t *testing.T) {
 	}{
 		{
 			name:        "Raw body at limit",
-			contentSize: 10 << 20, // 10MB
-			limit:       10 << 20, // 10MB limit
+			contentSize: 10 * units.MB,
+			limit:       10 * units.MB,
 			expectError: false,
 		},
 		{
 			name:        "Raw body over limit",
-			contentSize: 11 << 20, // 11MB
-			limit:       10 << 20, // 10MB limit
+			contentSize: 11 * units.MB,
+			limit:       10 * units.MB,
 			expectError: true,
 		},
 		{
 			name:        "Multipart at limit",
-			contentSize: 10 << 20, // 10MB
-			limit:       0,        // 0 + 10MB buffer
+			contentSize: (10 * units.MB) - 500,
+			limit:       10 * units.MB,
 			expectError: false,
 		},
 		{
 			name:        "Multipart over limit",
-			contentSize: 11 << 20, // 11MB
-			limit:       1,        // 0 + 10MB buffer
+			contentSize: 11 * units.MB,
+			limit:       10 * units.MB,
 			expectError: true,
 		},
 	}
