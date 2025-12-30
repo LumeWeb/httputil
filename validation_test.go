@@ -22,6 +22,7 @@ func TestValidate_ValidRequest(t *testing.T) {
 	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
+	validator.Field = "valid_value"
 	schema := z.Struct(z.Schema{
 		"Field": z.String().Min(3).Required(), // Match struct field name
 	})
@@ -44,8 +45,9 @@ func TestValidate_InvalidRequest(t *testing.T) {
 	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
+	validator.Field = "iv"
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3).Required(),
+		"Field": z.String().Min(3).Required(),
 	})
 
 	validator.EXPECT().Schema().Return(schema)
@@ -61,8 +63,8 @@ func TestValidate_InvalidRequest(t *testing.T) {
 	}
 
 	expected := "string must contain at least 3 character(s)"
-	if !strings.Contains(vErr.Fields()["field"], expected) {
-		t.Errorf("Expected error to contain %q, got %q", expected, vErr.Fields()["field"])
+	if !strings.Contains(vErr.Fields()["Field"], expected) {
+		t.Errorf("Expected error to contain %q, got %q", expected, vErr.Fields()["Field"])
 	}
 }
 
@@ -226,8 +228,9 @@ func TestValidate_EmptyField(t *testing.T) {
 
 	// Create and setup validator mock
 	validator := mocks.NewMockDTOValidator(t)
+	validator.Field = "a"
 	schema := z.Struct(z.Schema{
-		"field": z.String().Min(3).Required(),
+		"Field": z.String().Min(3).Required(),
 	})
 	validator.EXPECT().Schema().Return(schema)
 
@@ -243,8 +246,8 @@ func TestValidate_EmptyField(t *testing.T) {
 	}
 
 	expected := "string must contain at least 3 character(s)"
-	if !strings.Contains(vErr.Fields()["field"], expected) {
-		t.Errorf("Error message should contain %q, got %q", expected, vErr.Fields()["field"])
+	if !strings.Contains(vErr.Fields()["Field"], expected) {
+		t.Errorf("Error message should contain %q, got %q", expected, vErr.Fields()["Field"])
 	}
 }
 
@@ -290,9 +293,11 @@ func TestValidationError_MultipleFields(t *testing.T) {
 	r := Context(e.NewContext(req, w))
 
 	validator := mocks.NewMockDTOValidator(t)
+	validator.Field1 = "a"
+	validator.Field2 = ""
 	schema := z.Struct(z.Schema{
-		"field1": z.String().Min(3), // Match struct field name case
-		"field2": z.String().Required(),
+		"Field1": z.String().Min(3), // Match struct field name case
+		"Field2": z.String().Required(),
 	})
 	validator.EXPECT().Schema().Return(schema)
 
@@ -307,8 +312,8 @@ func TestValidationError_MultipleFields(t *testing.T) {
 	}
 
 	expectedErrors := map[string]string{
-		"field1": "string must contain at least 3 character(s)",
-		"field2": "field2: is required",
+		"Field1": "string must contain at least 3 character(s)",
+		"Field2": "is required",
 	}
 
 	for field, expected := range expectedErrors {
