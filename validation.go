@@ -94,11 +94,17 @@ func (r RequestContext) Validate(validator DTOValidator) error {
 
 		for _, issue := range issues {
 			path := issue.PathString()
-			if len(path) > 0 {
-				msg := fmt.Sprintf("%s: %s", path, issue.Message)
-				fieldErrors[path] = msg
-				errs = append(errs, errors.New(msg))
+			if len(issue.Message) == 0 {
+				continue
 			}
+			var msg string
+			if len(path) > 0 {
+				msg = fmt.Sprintf("%s: %s", path, issue.Message)
+			} else {
+				msg = issue.Message
+			}
+			fieldErrors[path] = msg
+			errs = append(errs, errors.New(msg))
 		}
 
 		return &ValidationError{
@@ -136,9 +142,10 @@ func (r RequestContext) ValidateRequest(entity DTOValidator) (map[string]string,
 		validationErrors := make(map[string]string)
 		for _, issue := range errs {
 			path := issue.PathString()
-			if len(path) > 0 {
-				validationErrors[path] = issue.Message
+			if len(issue.Message) == 0 {
+				continue
 			}
+			validationErrors[path] = issue.Message
 		}
 		return validationErrors, nil
 	}

@@ -327,3 +327,86 @@ func TestValidationError_MultipleFields(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_RootLevelError(t *testing.T) {
+	body := []byte(`{}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	validator := mocks.NewMockDTOValidator(t)
+	validator.Field = ""
+	schema := z.Struct(z.Schema{
+		"Field": z.String().Required(),
+	})
+	validator.EXPECT().Schema().Return(schema)
+
+	err := r.Validate(validator)
+	if err == nil {
+		t.Fatal("Expected validation error")
+	}
+
+	vErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("Expected ValidationError, got %T", err)
+	}
+
+	// Root-level errors should be captured with empty path as key
+	if len(vErr.Fields()) == 0 {
+		t.Fatal("Expected at least one validation error, got none")
+	}
+
+	// Check that the error message is present
+	found := false
+	for _, msg := range vErr.Fields() {
+		if strings.Contains(msg, "is required") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected error message to contain 'is required', got %v", vErr.Fields())
+	}
+}
+
+func TestValidateRequest_RootLevelError(t *testing.T) {
+	body := []byte(`{}`)
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e := echo.New()
+	r := Context(e.NewContext(req, w))
+
+	validator := mocks.NewMockDTOValidator(t)
+	schema := z.Struct(z.Schema{
+		"field": z.String().Required(),
+	})
+	validator.EXPECT().Schema().Return(schema)
+
+	validationErrors, err := r.ValidateRequest(validator)
+	if err != nil {
+		t.Fatalf("ValidateRequest returned unexpected error: %v", err)
+	}
+	if validationErrors == nil {
+		t.Fatal("Expected validation errors, got nil")
+	}
+
+	// Root-level errors should be captured
+	if len(validationErrors) == 0 {
+		t.Fatal("Expected at least one validation error, got none")
+	}
+
+	// Check that the error message is present
+	found := false
+	for _, msg := range validationErrors {
+		if strings.Contains(msg, "is required") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected error message to contain 'is required', got %v", validationErrors)
+	}
+}
