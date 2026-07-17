@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -133,7 +134,8 @@ func (r RequestContext) Decode(v any) error {
 
 // Error writes an HTTP error response and returns the error. Formats:
 // - ValidationErrors as 422 Unprocessable Entity with field-specific errors
-// - All other errors using Echo's error handler
+// - Errors implementing json.Marshaler as their custom JSON representation
+// - All other errors as a simple string under the "error" key
 func (r RequestContext) Error(err error, status int) error {
 	if err == nil {
 		return nil
@@ -150,7 +152,24 @@ func (r RequestContext) Error(err error, status int) error {
 		}
 		return vErr // Return original validation error
 	}
-	// Return the error from the JSON call
+
+	// If the error (or any error in its chain) implements json.Marshaler, use
+	// its custom JSON representation (e.g. structured error objects like
+	// {"error": {"reason": "...", "details": "..."}}).
+	// errors.As walks the wrap chain, so structured errors wrapped via
+	// fmt.Errorf("...: %w", structuredErr) are still found.
+	var marshaler json.Marshaler
+	if errors.As(err, &marshaler) {
+		data, marshalErr := marshaler.MarshalJSON()
+		if marshalErr == nil {
+			if jsonErr := r.JSONBlob(status, data); jsonErr != nil {
+				return jsonErr
+			}
+			return err
+		}
+	}
+
+	// Fall back to string representation
 	jsonErr := r.JSON(status, map[string]any{"error": err.Error()})
 	if jsonErr != nil {
 		return jsonErr
