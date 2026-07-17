@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/docker/go-units"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -159,6 +160,84 @@ func TestError(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "test error") {
 			t.Errorf("expected body to contain %q, got %q", "test error", w.Body.String())
+		}
+	})
+
+	t.Run("json.Marshaler error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		marshalerErr := testMarshalerError{
+			err:  errors.New("test marshaler error"),
+			body: []byte(`{"error":{"reason":"UNAUTHORIZED","details":"Access denied"}}`),
+		}
+
+		err := r.Error(marshalerErr, http.StatusUnauthorized)
+
+		if err == nil {
+			t.Errorf("expected error to be returned")
+		}
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected status code %d, got %d", http.StatusUnauthorized, w.Code)
+		}
+
+		var response map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		errObj, ok := response["error"].(map[string]interface{})
+		if !ok {
+			t.Errorf("expected error to be an object, got %T", response["error"])
+			return
+		}
+		if errObj["reason"] != "UNAUTHORIZED" {
+			t.Errorf("expected reason 'UNAUTHORIZED', got %q", errObj["reason"])
+		}
+		if errObj["details"] != "Access denied" {
+			t.Errorf("expected details 'Access denied', got %q", errObj["details"])
+		}
+	})
+
+	t.Run("wrapped json.Marshaler error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		// Wrap the marshaler error with fmt.Errorf — the marshaler is now
+		// buried in the error chain, not the top-level type.
+		wrappedErr := fmt.Errorf("handler failed: %w", testMarshalerError{
+			err:  errors.New("test marshaler error"),
+			body: []byte(`{"error":{"reason":"NOT_FOUND","details":"resource missing"}}`),
+		})
+
+		err := r.Error(wrappedErr, http.StatusNotFound)
+
+		if err == nil {
+			t.Errorf("expected error to be returned")
+		}
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status code %d, got %d", http.StatusNotFound, w.Code)
+		}
+
+		var response map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		errObj, ok := response["error"].(map[string]interface{})
+		if !ok {
+			t.Errorf("expected error to be an object, got %T: %v", response["error"], response["error"])
+			return
+		}
+		if errObj["reason"] != "NOT_FOUND" {
+			t.Errorf("expected reason 'NOT_FOUND', got %q", errObj["reason"])
+		}
+		if errObj["details"] != "resource missing" {
+			t.Errorf("expected details 'resource missing', got %q", errObj["details"])
 		}
 	})
 
@@ -362,6 +441,17 @@ func dereference(v any) any {
 }
 
 type TextUnmarshaler string
+
+// testMarshalerError implements both error and json.Marshaler for testing.
+type testMarshalerError struct {
+	err  error
+	body []byte
+}
+
+func (e testMarshalerError) Error() string { return e.err.Error() }
+func (e testMarshalerError) MarshalJSON() ([]byte, error) { return e.body, nil }
+
+// TestMarshalerError tests that Error() respects json.Marshaler.
 
 func (t *TextUnmarshaler) UnmarshalText(text []byte) error {
 	*t = TextUnmarshaler("unmarshaled: " + string(text))
