@@ -139,6 +139,62 @@ func DecodeAndValidateRequest[M any, D DTORequest[M]](
 	return model, true
 }
 
+// DecodeAndValidateQueryRequest binds query parameters to a DTO, validates it,
+// and converts it to a domain model. It mirrors DecodeAndValidateRequest but
+// uses query parameter binding instead of body decoding, making it safe for
+// GET/HEAD/DELETE endpoints that use filter DTOs with `query` struct tags.
+func DecodeAndValidateQueryRequest[M any, D DTORequest[M]](
+	r RequestContext,
+	dto D,
+	opts ...VDOption,
+) (M, bool) {
+	var zero M
+
+	// Configure defaults
+	cfg := &vdConfig{
+		errorHandler: &DefaultErrorHandler{},
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Ensure we have a valid error handler
+	if cfg.errorHandler == nil {
+		cfg.errorHandler = &DefaultErrorHandler{}
+	}
+
+	// Decode phase — query params only
+	if err := r.DecodeQuery(dto); err != nil {
+		if cfg.errorHandler != nil {
+			cfg.errorHandler.HandleError(r, err)
+		}
+		return zero, false
+	}
+
+	// Validation phase - only if DTO implements DTOValidator
+	if validator, ok := any(dto).(DTOValidator); ok && validator != nil {
+		if verr := r.Validate(validator); verr != nil {
+			if cfg.errorHandler != nil {
+				cfg.errorHandler.HandleError(r, verr)
+			}
+			return zero, false
+		}
+	}
+
+	// Model conversion
+	model, err := dto.ToModel()
+	if err != nil {
+		if cfg.errorHandler != nil {
+			cfg.errorHandler.HandleError(r, err)
+		}
+		return zero, false
+	}
+
+	return model, true
+}
+
 // EncodeResponse handles the response generation pipeline.
 // It uses generics to ensure type safety when encoding the response.
 func EncodeResponse[M any, D DTOResponse[M]](r RequestContext, model M, dto D, opts ...VDOption) error {

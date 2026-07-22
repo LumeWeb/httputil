@@ -472,3 +472,90 @@ func TestDecodeAndValidateRequest_WithoutValidator(t *testing.T) {
 		t.Errorf("Expected model name 'test', got %q", model.Name)
 	}
 }
+
+// queryDTO is a test DTO that binds from query params instead of JSON body.
+type queryDTO struct {
+	Name string `query:"name"`
+}
+
+func (d *queryDTO) ToModel() (simpleModel, error) {
+	return simpleModel{Name: d.Name}, nil
+}
+
+// queryDTOWithValidator is a query DTO that also implements DTOValidator.
+type queryDTOWithValidator struct {
+	*mocks.MockDTOValidator
+	Name string `query:"name"`
+}
+
+func (d *queryDTOWithValidator) ToModel() (simpleModel, error) {
+	return simpleModel{Name: d.Name}, nil
+}
+
+func TestDecodeAndValidateQueryRequest(t *testing.T) {
+	t.Run("successful query binding", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test?name=alice", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		dto := &queryDTO{}
+		model, ok := DecodeAndValidateQueryRequest(r, dto)
+		if !ok {
+			t.Fatal("Expected success")
+		}
+		if model.Name != "alice" {
+			t.Errorf("Expected name 'alice', got %q", model.Name)
+		}
+	})
+
+	t.Run("chunked encoding with JSON content type", func(t *testing.T) {
+		// Simulates the production bug that DecodeAndValidateRequest hits.
+		pr, pw := io.Pipe()
+		pw.Close()
+
+		req, _ := http.NewRequest("GET", "/test?name=bob", pr)
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = -1
+		req.TransferEncoding = []string{"chunked"}
+
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		dto := &queryDTO{}
+		model, ok := DecodeAndValidateQueryRequest(r, dto)
+		if !ok {
+			t.Fatal("Expected success")
+		}
+		if model.Name != "bob" {
+			t.Errorf("Expected name 'bob', got %q", model.Name)
+		}
+	})
+
+	t.Run("with validation error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test?name=a", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		validator := mocks.NewMockDTOValidator(t)
+		schema := z.Struct(z.Schema{
+			"name": z.String().Min(3).Required(),
+		})
+		validator.EXPECT().Schema().Return(schema)
+
+		dto := &queryDTOWithValidator{
+			MockDTOValidator: validator,
+			Name:             "a",
+		}
+
+		_, ok := DecodeAndValidateQueryRequest(r, dto)
+		if ok {
+			t.Fatal("Expected validation failure")
+		}
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("Expected status %d, got %d", http.StatusUnprocessableEntity, w.Code)
+		}
+	})
+}
