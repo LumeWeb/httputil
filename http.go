@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/labstack/echo/v4"
 )
 
 // FileUploadResult contains the uploaded file and its metadata
@@ -129,6 +131,28 @@ func (r RequestContext) Decode(v any) error {
 		return fmt.Errorf("couldn't decode request type (%T): %w", v, err)
 	}
 
+	return nil
+}
+
+// DecodeQuery binds query parameters to the provided value using Echo's query
+// parameter binder. Unlike Decode, this does not read or inspect the request
+// body, making it safe for GET/HEAD/DELETE requests where only query params
+// are used (e.g. filter DTOs with `query` struct tags).
+func (r RequestContext) DecodeQuery(v any) error {
+	type queryBinder interface {
+		BindQueryParams(c echo.Context, i interface{}) error
+	}
+
+	var binder queryBinder
+	if b, ok := r.Context.Echo().Binder.(queryBinder); ok {
+		binder = b
+	} else {
+		binder = new(echo.DefaultBinder)
+	}
+
+	if err := binder.BindQueryParams(r.Context, v); err != nil {
+		return fmt.Errorf("couldn't decode query type (%T): %w", v, err)
+	}
 	return nil
 }
 

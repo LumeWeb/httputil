@@ -143,6 +143,101 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeQuery(t *testing.T) {
+	t.Run("binds query params", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/?name=test&id=42", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		var dst struct {
+			Name string `query:"name"`
+			ID   int    `query:"id"`
+		}
+		err := r.DecodeQuery(&dst)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.Name != "test" {
+			t.Errorf("expected Name=test, got %q", dst.Name)
+		}
+		if dst.ID != 42 {
+			t.Errorf("expected ID=42, got %d", dst.ID)
+		}
+	})
+
+	t.Run("chunked encoding with JSON content type", func(t *testing.T) {
+		// Simulates the production bug: GET with chunked encoding, empty body,
+		// and application/json content type. Echo's BindBody would hit EOF.
+		pr, pw := io.Pipe()
+		pw.Close()
+
+		req, _ := http.NewRequest("GET", "/?name=test", pr)
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = -1
+		req.TransferEncoding = []string{"chunked"}
+
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		var dst struct {
+			Name string `query:"name"`
+		}
+		err := r.DecodeQuery(&dst)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.Name != "test" {
+			t.Errorf("expected Name=test, got %q", dst.Name)
+		}
+	})
+
+	t.Run("chunked encoding with unknown content type", func(t *testing.T) {
+		// Simulates 415 Unsupported Media Type scenario.
+		pr, pw := io.Pipe()
+		pw.Close()
+
+		req, _ := http.NewRequest("GET", "/?name=test", pr)
+		req.Header.Set("Content-Type", "text/plain")
+		req.ContentLength = -1
+		req.TransferEncoding = []string{"chunked"}
+
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		var dst struct {
+			Name string `query:"name"`
+		}
+		err := r.DecodeQuery(&dst)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.Name != "test" {
+			t.Errorf("expected Name=test, got %q", dst.Name)
+		}
+	})
+
+	t.Run("empty query params", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		var dst struct {
+			Name string `query:"name"`
+		}
+		err := r.DecodeQuery(&dst)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.Name != "" {
+			t.Errorf("expected empty Name, got %q", dst.Name)
+		}
+	})
+}
+
 func TestError(t *testing.T) {
 	t.Run("standard error", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
