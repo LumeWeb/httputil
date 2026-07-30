@@ -76,41 +76,33 @@ func WithErrorHandler(h ErrorHandler) VDOption {
 	}
 }
 
-// DecodeAndValidateRequest handles the complete request processing pipeline:
-//  1. Decode request body to DTO
-//  2. Validate using DTOValidator interface (if implemented)
-//  3. Convert to domain model using ToModel()
-//
-// Returns:
-//   - The parsed domain model and true on success
-//   - Zero value and false on any error, with error handling delegated to the ErrorHandler
-//
-// The function uses generics to ensure type safety and accepts optional VDOptions
-// to customize processing behavior per invocation.
-func DecodeAndValidateRequest[M any, D DTORequest[M]](
+// decodeFunc is a function that binds request data (body, query, path) into a DTO.
+type decodeFunc func(v any) error
+
+// decodeValidateAndConvert runs the shared pipeline: decode → validate → ToModel,
+// with error handling delegated to the configured ErrorHandler.
+func decodeValidateAndConvert[M any, D DTORequest[M]](
 	r RequestContext,
 	dto D,
+	decode decodeFunc,
 	opts ...VDOption,
 ) (M, bool) {
 	var zero M
 
-	// Configure defaults
 	cfg := &vdConfig{
 		errorHandler: &DefaultErrorHandler{},
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	// Ensure we have a valid error handler
 	if cfg.errorHandler == nil {
 		cfg.errorHandler = &DefaultErrorHandler{}
 	}
 
 	// Decode phase
-	if err := r.Decode(dto); err != nil {
+	if err := decode(dto); err != nil {
 		if cfg.errorHandler != nil {
 			cfg.errorHandler.HandleError(r, err)
 		}
@@ -139,6 +131,25 @@ func DecodeAndValidateRequest[M any, D DTORequest[M]](
 	return model, true
 }
 
+// DecodeAndValidateRequest handles the complete request processing pipeline:
+//  1. Decode request body to DTO
+//  2. Validate using DTOValidator interface (if implemented)
+//  3. Convert to domain model using ToModel()
+//
+// Returns:
+//   - The parsed domain model and true on success
+//   - Zero value and false on any error, with error handling delegated to the ErrorHandler
+//
+// The function uses generics to ensure type safety and accepts optional VDOptions
+// to customize processing behavior per invocation.
+func DecodeAndValidateRequest[M any, D DTORequest[M]](
+	r RequestContext,
+	dto D,
+	opts ...VDOption,
+) (M, bool) {
+	return decodeValidateAndConvert(r, dto, r.Decode, opts...)
+}
+
 // DecodeAndValidateQueryRequest binds query parameters to a DTO, validates it,
 // and converts it to a domain model. It mirrors DecodeAndValidateRequest but
 // uses query parameter binding instead of body decoding, making it safe for
@@ -148,51 +159,19 @@ func DecodeAndValidateQueryRequest[M any, D DTORequest[M]](
 	dto D,
 	opts ...VDOption,
 ) (M, bool) {
-	var zero M
+	return decodeValidateAndConvert(r, dto, r.DecodeQuery, opts...)
+}
 
-	// Configure defaults
-	cfg := &vdConfig{
-		errorHandler: &DefaultErrorHandler{},
-	}
-
-	// Apply options
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	// Ensure we have a valid error handler
-	if cfg.errorHandler == nil {
-		cfg.errorHandler = &DefaultErrorHandler{}
-	}
-
-	// Decode phase — query params only
-	if err := r.DecodeQuery(dto); err != nil {
-		if cfg.errorHandler != nil {
-			cfg.errorHandler.HandleError(r, err)
-		}
-		return zero, false
-	}
-
-	// Validation phase - only if DTO implements DTOValidator
-	if validator, ok := any(dto).(DTOValidator); ok && validator != nil {
-		if verr := r.Validate(validator); verr != nil {
-			if cfg.errorHandler != nil {
-				cfg.errorHandler.HandleError(r, verr)
-			}
-			return zero, false
-		}
-	}
-
-	// Model conversion
-	model, err := dto.ToModel()
-	if err != nil {
-		if cfg.errorHandler != nil {
-			cfg.errorHandler.HandleError(r, err)
-		}
-		return zero, false
-	}
-
-	return model, true
+// DecodeAndValidatePathRequest binds path parameters to a DTO, validates it,
+// and converts it to a domain model. It mirrors DecodeAndValidateRequest but
+// uses path parameter binding instead of body decoding, making it safe for
+// GET/HEAD/DELETE endpoints that use DTOs with `param` struct tags.
+func DecodeAndValidatePathRequest[M any, D DTORequest[M]](
+	r RequestContext,
+	dto D,
+	opts ...VDOption,
+) (M, bool) {
+	return decodeValidateAndConvert(r, dto, r.DecodePathParams, opts...)
 }
 
 // EncodeResponse handles the response generation pipeline.

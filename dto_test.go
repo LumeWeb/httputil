@@ -492,15 +492,31 @@ func (d *queryDTOWithValidator) ToModel() (simpleModel, error) {
 	return simpleModel{Name: d.Name}, nil
 }
 
+// pathDTO is a test DTO that binds from path params instead of JSON body.
+type pathDTO struct {
+	CID string `param:"cid"`
+}
+
+func (d *pathDTO) ToModel() (simpleModel, error) {
+	return simpleModel{Name: d.CID}, nil
+}
+
+// pathDTOWithValidator is a path DTO that also implements DTOValidator.
+type pathDTOWithValidator struct {
+	*mocks.MockDTOValidator
+	CID string `param:"cid"`
+}
+
+func (d *pathDTOWithValidator) ToModel() (simpleModel, error) {
+	return simpleModel{Name: d.CID}, nil
+}
+
 func TestDecodeAndValidateQueryRequest(t *testing.T) {
 	t.Run("successful query binding", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test?name=alice", nil)
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
-		dto := &queryDTO{}
-		model, ok := DecodeAndValidateQueryRequest(r, dto)
+		model, ok := DecodeAndValidateQueryRequest(r, &queryDTO{})
 		if !ok {
 			t.Fatal("Expected success")
 		}
@@ -510,21 +526,10 @@ func TestDecodeAndValidateQueryRequest(t *testing.T) {
 	})
 
 	t.Run("chunked encoding with JSON content type", func(t *testing.T) {
-		// Simulates the production bug that DecodeAndValidateRequest hits.
-		pr, pw := io.Pipe()
-		pw.Close()
+		req := newChunkedGetRequest("/test?name=bob", "application/json")
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
-		req, _ := http.NewRequest("GET", "/test?name=bob", pr)
-		req.Header.Set("Content-Type", "application/json")
-		req.ContentLength = -1
-		req.TransferEncoding = []string{"chunked"}
-
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
-
-		dto := &queryDTO{}
-		model, ok := DecodeAndValidateQueryRequest(r, dto)
+		model, ok := DecodeAndValidateQueryRequest(r, &queryDTO{})
 		if !ok {
 			t.Fatal("Expected success")
 		}
@@ -536,21 +541,61 @@ func TestDecodeAndValidateQueryRequest(t *testing.T) {
 	t.Run("with validation error", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test?name=a", nil)
 		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		r := Context(echo.New().NewContext(req, w))
 
-		validator := mocks.NewMockDTOValidator(t)
-		schema := z.Struct(z.Schema{
-			"name": z.String().Min(3).Required(),
-		})
-		validator.EXPECT().Schema().Return(schema)
-
-		dto := &queryDTOWithValidator{
-			MockDTOValidator: validator,
-			Name:             "a",
-		}
+		validator := newMinLengthValidator(t, "name", 3)
+		dto := &queryDTOWithValidator{MockDTOValidator: validator, Name: "a"}
 
 		_, ok := DecodeAndValidateQueryRequest(r, dto)
+		if ok {
+			t.Fatal("Expected validation failure")
+		}
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("Expected status %d, got %d", http.StatusUnprocessableEntity, w.Code)
+		}
+	})
+}
+
+func TestDecodeAndValidatePathRequest(t *testing.T) {
+	t.Run("successful path binding", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/bafybeie3ytqa2", nil)
+		r := setupPathContext(req)
+
+		model, ok := DecodeAndValidatePathRequest(r, &pathDTO{})
+		if !ok {
+			t.Fatal("Expected success")
+		}
+		if model.Name != "bafybeie3ytqa2" {
+			t.Errorf("Expected cid 'bafybeie3ytqa2', got %q", model.Name)
+		}
+	})
+
+	t.Run("chunked encoding with JSON content type", func(t *testing.T) {
+		req := newChunkedGetRequest("/dag/bafybeie3ytqa2", "application/json")
+		r := setupPathContext(req)
+
+		model, ok := DecodeAndValidatePathRequest(r, &pathDTO{})
+		if !ok {
+			t.Fatal("Expected success")
+		}
+		if model.Name != "bafybeie3ytqa2" {
+			t.Errorf("Expected cid 'bafybeie3ytqa2', got %q", model.Name)
+		}
+	})
+
+	t.Run("with validation error", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/dag/a", nil)
+		w := httptest.NewRecorder()
+		c := echo.New().NewContext(req, w)
+		c.SetPath("/dag/:cid")
+		c.SetParamNames("cid")
+		c.SetParamValues("a")
+		r := Context(c)
+
+		validator := newMinLengthValidator(t, "CID", 3)
+		dto := &pathDTOWithValidator{MockDTOValidator: validator, CID: "a"}
+
+		_, ok := DecodeAndValidatePathRequest(r, dto)
 		if ok {
 			t.Fatal("Expected validation failure")
 		}

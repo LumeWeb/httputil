@@ -146,16 +146,13 @@ func TestDecode(t *testing.T) {
 func TestDecodeQuery(t *testing.T) {
 	t.Run("binds query params", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?name=test&id=42", nil)
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
 		var dst struct {
 			Name string `query:"name"`
 			ID   int    `query:"id"`
 		}
-		err := r.DecodeQuery(&dst)
-		if err != nil {
+		if err := r.DecodeQuery(&dst); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if dst.Name != "test" {
@@ -167,25 +164,13 @@ func TestDecodeQuery(t *testing.T) {
 	})
 
 	t.Run("chunked encoding with JSON content type", func(t *testing.T) {
-		// Simulates the production bug: GET with chunked encoding, empty body,
-		// and application/json content type. Echo's BindBody would hit EOF.
-		pr, pw := io.Pipe()
-		pw.Close()
-
-		req, _ := http.NewRequest("GET", "/?name=test", pr)
-		req.Header.Set("Content-Type", "application/json")
-		req.ContentLength = -1
-		req.TransferEncoding = []string{"chunked"}
-
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		req := newChunkedGetRequest("/?name=test", "application/json")
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
 		var dst struct {
 			Name string `query:"name"`
 		}
-		err := r.DecodeQuery(&dst)
-		if err != nil {
+		if err := r.DecodeQuery(&dst); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if dst.Name != "test" {
@@ -194,24 +179,13 @@ func TestDecodeQuery(t *testing.T) {
 	})
 
 	t.Run("chunked encoding with unknown content type", func(t *testing.T) {
-		// Simulates 415 Unsupported Media Type scenario.
-		pr, pw := io.Pipe()
-		pw.Close()
-
-		req, _ := http.NewRequest("GET", "/?name=test", pr)
-		req.Header.Set("Content-Type", "text/plain")
-		req.ContentLength = -1
-		req.TransferEncoding = []string{"chunked"}
-
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		req := newChunkedGetRequest("/?name=test", "text/plain")
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
 		var dst struct {
 			Name string `query:"name"`
 		}
-		err := r.DecodeQuery(&dst)
-		if err != nil {
+		if err := r.DecodeQuery(&dst); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if dst.Name != "test" {
@@ -221,19 +195,71 @@ func TestDecodeQuery(t *testing.T) {
 
 	t.Run("empty query params", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		w := httptest.NewRecorder()
-		e := echo.New()
-		r := Context(e.NewContext(req, w))
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
 
 		var dst struct {
 			Name string `query:"name"`
 		}
-		err := r.DecodeQuery(&dst)
-		if err != nil {
+		if err := r.DecodeQuery(&dst); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if dst.Name != "" {
 			t.Errorf("expected empty Name, got %q", dst.Name)
+		}
+	})
+}
+
+func TestDecodePathParams(t *testing.T) {
+	t.Run("binds path params", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/dag/bafybeie3ytqa2", nil)
+		r := setupPathContext(req)
+
+		var dst struct {
+			CID string `param:"cid"`
+		}
+		if err := r.DecodePathParams(&dst); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.CID != "bafybeie3ytqa2" {
+			t.Errorf("expected CID=bafybeie3ytqa2, got %q", dst.CID)
+		}
+	})
+
+	for _, tc := range []struct {
+		name        string
+		contentType string
+	}{
+		{"chunked encoding with JSON content type", "application/json"},
+		{"chunked encoding with unknown content type", "text/plain"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newChunkedGetRequest("/dag/bafybeie3ytqa2", tc.contentType)
+			r := setupPathContext(req)
+
+			var dst struct {
+				CID string `param:"cid"`
+			}
+			if err := r.DecodePathParams(&dst); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if dst.CID != "bafybeie3ytqa2" {
+				t.Errorf("expected CID=bafybeie3ytqa2, got %q", dst.CID)
+			}
+		})
+	}
+
+	t.Run("empty path params", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		r := Context(echo.New().NewContext(req, httptest.NewRecorder()))
+
+		var dst struct {
+			CID string `param:"cid"`
+		}
+		if err := r.DecodePathParams(&dst); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dst.CID != "" {
+			t.Errorf("expected empty CID, got %q", dst.CID)
 		}
 	})
 }
