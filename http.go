@@ -156,6 +156,28 @@ func (r RequestContext) DecodeQuery(v any) error {
 	return nil
 }
 
+// DecodePathParams binds path parameters to the provided value using Echo's
+// path parameter binder. Unlike Decode, this does not read or inspect the
+// request body, making it safe for GET/HEAD/DELETE requests where only path
+// params are used (e.g. DTOs with `param` struct tags).
+func (r RequestContext) DecodePathParams(v any) error {
+	type pathBinder interface {
+		BindPathParams(c echo.Context, i interface{}) error
+	}
+
+	var binder pathBinder
+	if b, ok := r.Context.Echo().Binder.(pathBinder); ok {
+		binder = b
+	} else {
+		binder = new(echo.DefaultBinder)
+	}
+
+	if err := binder.BindPathParams(r.Context, v); err != nil {
+		return fmt.Errorf("couldn't decode path params type (%T): %w", v, err)
+	}
+	return nil
+}
+
 // Error writes an HTTP error response and returns the error. Formats:
 // - ValidationErrors as 422 Unprocessable Entity with field-specific errors
 // - Errors implementing json.Marshaler as their custom JSON representation
