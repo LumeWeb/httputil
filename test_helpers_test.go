@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -58,4 +59,37 @@ func newMinLengthValidator(t *testing.T, field string, minLen int) *mocks.MockDT
 	})
 	v.EXPECT().Schema().Return(schema)
 	return v
+}
+
+// responseErrorDetail returns the top-level "error" field of a parsed response,
+// asserting that it is a structured ErrorDetail object. This guards against
+// the regression where "error" was emitted as a plain string.
+func responseErrorDetail(t *testing.T, resp map[string]interface{}) map[string]interface{} {
+	t.Helper()
+
+	errObj, ok := resp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected error to be an object, got %T: %v", resp["error"], resp["error"])
+	}
+	return errObj
+}
+
+// assertErrorDetail parses a response body and verifies it conforms to the
+// canonical ErrorResponse/ErrorDetail contract:
+// {"error":{"reason":...,"details":...}}.
+func assertErrorDetail(t *testing.T, body []byte, wantReason, wantDetails string) {
+	t.Helper()
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	errObj := responseErrorDetail(t, resp)
+	if errObj["reason"] != wantReason {
+		t.Errorf("expected reason %q, got %q", wantReason, errObj["reason"])
+	}
+	if errObj["details"] != wantDetails {
+		t.Errorf("expected details %q, got %q", wantDetails, errObj["details"])
+	}
 }
