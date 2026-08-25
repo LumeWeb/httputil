@@ -179,9 +179,13 @@ func (r RequestContext) DecodePathParams(v any) error {
 }
 
 // Error writes an HTTP error response and returns the error. Formats:
-// - ValidationErrors as 422 Unprocessable Entity with field-specific errors
-// - Errors implementing json.Marshaler as their custom JSON representation
-// - All other errors as a simple string under the "error" key
+//   - ValidationErrors as 422 Unprocessable Entity with field-specific errors
+//   - Errors implementing json.Marshaler as their custom JSON representation
+//   - All other errors as the canonical structured error object under the "error"
+//     key: {"error": {"reason": "...", "details": "..."}}
+//
+// Every non-nil error emits the structured errorDetail object so generated SDK
+// clients (ErrorResponse/ErrorDetail) can unmarshal the response reliably.
 func (r RequestContext) Error(err error, status int) error {
 	if err == nil {
 		return nil
@@ -190,7 +194,7 @@ func (r RequestContext) Error(err error, status int) error {
 	var vErr *ValidationError
 	if errors.As(err, &vErr) {
 		err = r.JSON(status, map[string]any{
-			"error":  vErr.Error(),
+			"error":  errorDetail{Reason: "ValidationError", Details: vErr.Error()},
 			"fields": vErr.Fields(),
 		})
 		if err != nil {
@@ -215,12 +219,26 @@ func (r RequestContext) Error(err error, status int) error {
 		}
 	}
 
-	// Fall back to string representation
-	jsonErr := r.JSON(status, map[string]any{"error": err.Error()})
+	jsonErr := r.JSON(status, errorResponseBody{
+		Error: errorDetail{Reason: "Error", Details: err.Error()},
+	})
 	if jsonErr != nil {
 		return jsonErr
 	}
 	return err // Return original error for test assertions
+}
+
+// errorDetail is the canonical structured error detail format declared by the
+// API contract's ErrorDetail schema ({"reason": ..., "details": ...}).
+type errorDetail struct {
+	Reason  string `json:"reason"`
+	Details string `json:"details,omitempty"`
+}
+
+// errorResponseBody wraps errorDetail under the "error" key, matching the
+// canonical ErrorResponse schema.
+type errorResponseBody struct {
+	Error errorDetail `json:"error"`
 }
 
 // Check simplifies error handling by:

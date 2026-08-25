@@ -125,8 +125,10 @@ func TestDecodeAndValidateRequest_DecodeError(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if !strings.Contains(resp["error"].(string), "cannot unmarshal number into Go struct field") {
-		t.Errorf("Error message mismatch:\ngot: %v\nwant: %v", resp["error"], "cannot unmarshal number into Go struct field")
+	errObj := responseErrorDetail(t, resp)
+	details, _ := errObj["details"].(string)
+	if !strings.Contains(details, "cannot unmarshal number into Go struct field") {
+		t.Errorf("Error message mismatch:\ngot: %v\nwant: %v", details, "cannot unmarshal number into Go struct field")
 	}
 }
 
@@ -178,8 +180,9 @@ func TestDecodeAndValidateRequest_ValidationError(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if resp["error"] != "validation failed" {
-		t.Errorf("Expected error 'validation failed', got %v", resp["error"])
+	errObj := responseErrorDetail(t, resp)
+	if errObj["reason"] != "ValidationError" {
+		t.Errorf("Expected reason 'ValidationError', got %v", errObj["reason"])
 	}
 
 	fields := resp["fields"].(map[string]interface{})
@@ -221,8 +224,10 @@ func TestDecodeAndValidateRequest_DTOToModelError(t *testing.T) {
 		t.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	if !strings.Contains(resp["error"].(string), "invalid model type") {
-		t.Errorf("Error message should contain: %q, got %q", "invalid model type", resp["error"])
+	errObj := responseErrorDetail(t, resp)
+	details, _ := errObj["details"].(string)
+	if !strings.Contains(details, "invalid model type") {
+		t.Errorf("Error message should contain: %q, got %q", "invalid model type", details)
 	}
 }
 

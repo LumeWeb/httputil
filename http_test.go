@@ -279,9 +279,8 @@ func TestError(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected status code %d, got %d", http.StatusBadRequest, w.Code)
 		}
-		if !strings.Contains(w.Body.String(), "test error") {
-			t.Errorf("expected body to contain %q, got %q", "test error", w.Body.String())
-		}
+
+		assertErrorDetail(t, w.Body.Bytes(), "Error", "test error")
 	})
 
 	t.Run("json.Marshaler error", func(t *testing.T) {
@@ -309,11 +308,7 @@ func TestError(t *testing.T) {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
 
-		errObj, ok := response["error"].(map[string]interface{})
-		if !ok {
-			t.Errorf("expected error to be an object, got %T", response["error"])
-			return
-		}
+		errObj := responseErrorDetail(t, response)
 		if errObj["reason"] != "UNAUTHORIZED" {
 			t.Errorf("expected reason 'UNAUTHORIZED', got %q", errObj["reason"])
 		}
@@ -349,11 +344,7 @@ func TestError(t *testing.T) {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
 
-		errObj, ok := response["error"].(map[string]interface{})
-		if !ok {
-			t.Errorf("expected error to be an object, got %T: %v", response["error"], response["error"])
-			return
-		}
+		errObj := responseErrorDetail(t, response)
 		if errObj["reason"] != "NOT_FOUND" {
 			t.Errorf("expected reason 'NOT_FOUND', got %q", errObj["reason"])
 		}
@@ -389,14 +380,54 @@ func TestError(t *testing.T) {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
 
-		if response["error"] != "validation failed" {
-			t.Errorf("expected error key 'validation failed', got %q", response["error"])
+		errObj := responseErrorDetail(t, response)
+		if errObj["reason"] != "ValidationError" {
+			t.Errorf("expected reason 'ValidationError', got %q", errObj["reason"])
+		}
+		if errObj["details"] != "validation failed" {
+			t.Errorf("expected details 'validation failed', got %q", errObj["details"])
 		}
 
 		fields := response["fields"].(map[string]interface{})
 		if len(fields) != 2 || fields["field1"] != "error1" || fields["field2"] != "error2" {
 			t.Errorf("unexpected fields content: %v", fields)
 		}
+	})
+}
+
+func TestDefaultErrorHandler_StructuredError(t *testing.T) {
+	t.Run("generic error emits ErrorDetail object", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		h := &DefaultErrorHandler{}
+		h.HandleError(r, errors.New("boom"))
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("expected status code %d, got %d", http.StatusInternalServerError, w.Code)
+		}
+		assertErrorDetail(t, w.Body.Bytes(), "Error", "boom")
+	})
+
+	t.Run("validation error emits ErrorDetail object with fields", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		verr := &ValidationError{
+			FieldErrors: map[string]string{"field1": "error1"},
+			joinedError: errors.New("validation failed"),
+		}
+		h := &DefaultErrorHandler{}
+		h.HandleError(r, verr)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("expected status code %d, got %d", http.StatusUnprocessableEntity, w.Code)
+		}
+		assertErrorDetail(t, w.Body.Bytes(), "ValidationError", "validation failed")
 	})
 }
 
@@ -569,7 +600,7 @@ type testMarshalerError struct {
 	body []byte
 }
 
-func (e testMarshalerError) Error() string { return e.err.Error() }
+func (e testMarshalerError) Error() string                { return e.err.Error() }
 func (e testMarshalerError) MarshalJSON() ([]byte, error) { return e.body, nil }
 
 // TestMarshalerError tests that Error() respects json.Marshaler.
