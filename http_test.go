@@ -283,6 +283,27 @@ func TestError(t *testing.T) {
 		assertErrorDetail(t, w.Body.Bytes(), "Error", "test error")
 	})
 
+	t.Run("empty-string error still emits details key", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		e := echo.New()
+		r := Context(e.NewContext(req, w))
+
+		err := r.Error(errors.New(""), http.StatusBadRequest)
+		if err == nil {
+			t.Fatal("expected error to be returned")
+		}
+
+		var response map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		errObj := responseErrorDetail(t, response)
+		if _, present := errObj["details"]; !present {
+			t.Errorf("expected details key to be present even when empty, got %v", errObj["details"])
+		}
+	})
+
 	t.Run("json.Marshaler error", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		w := httptest.NewRecorder()

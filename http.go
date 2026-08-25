@@ -229,10 +229,11 @@ func (r RequestContext) Error(err error, status int) error {
 }
 
 // errorDetail is the canonical structured error detail format declared by the
-// API contract's ErrorDetail schema ({"reason": ..., "details": ...}).
+// API contract's ErrorDetail schema ({"reason": ..., "details": ...}). Both
+// keys are always emitted so every error response carries the full contract.
 type errorDetail struct {
 	Reason  string `json:"reason"`
-	Details string `json:"details,omitempty"`
+	Details string `json:"details"`
 }
 
 // errorResponseBody wraps errorDetail under the "error" key, matching the
